@@ -1,0 +1,60 @@
+set_time:
+  name: Set time
+  description: >-
+    Write the current time (or a custom timestamp) to an LYWSD02 clock.
+    When called against a MAC that matches a configured entry, this runs through
+    the coordinator and updates the entry's last_sync / last_sync_status state.
+  fields:
+    mac:
+      name: MAC
+      description: Bluetooth MAC address of the device.
+      required: true
+      example: "E7:2E:01:42:60:FF"
+      selector:
+        text:
+    timestamp:
+      name: Timestamp
+      description: UTC epoch seconds. Defaults to Home Assistant's current UTC time.
+      example: 1745078400
+      selector:
+        number:
+          min: 0
+          max: 4102444800
+          mode: box
+    tz_offset:
+      name: Timezone offset
+      description: Timezone offset in hours. Defaults to Home Assistant's local offset.
+      example: 1
+      selector:
+        number:
+          min: -12
+          max: 14
+          mode: box
+    temp_mode:
+      name: Temperature unit
+      description: Temperature unit displayed on the clock.
+      example: C
+      selector:
+        select:
+          options:
+            - C
+            - F
+    clock_mode:
+      name: Clock mode
+      description: 12-hour or 24-hour clock display.
+      example: 24
+      selector:
+        select:
+          options:
+            - "12"
+            - "24"
+    timeout:
+      name: Timeout
+      description: BLE connection timeout in seconds.
+      default: 60
+      selector:
+        number:
+          min: 5
+          max: 300
+          unit_of_measurement: s
+          mode: box

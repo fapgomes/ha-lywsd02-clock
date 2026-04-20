@@ -1,0 +1,17 @@
+{
+  "domain": "lywsd02_clock",
+  "name": "LYWSD02 Clock",
+  "version": "0.1.0",
+  "codeowners": ["@fapgomes"],
+  "config_flow": true,
+  "dependencies": ["bluetooth_adapters"],
+  "documentation": "https://github.com/fapgomes/ha-lywsd02-clock",
+  "integration_type": "device",
+  "iot_class": "local_polling",
+  "issue_tracker": "https://github.com/fapgomes/ha-lywsd02-clock/issues",
+  "loggers": ["custom_components.lywsd02_clock"],
+  "requirements": ["bleak-retry-connector>=3.0"],
+  "bluetooth": [
+    {"local_name": "LYWSD02"}
+  ]
+}

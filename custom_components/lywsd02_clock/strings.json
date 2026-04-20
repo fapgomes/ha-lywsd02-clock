@@ -1,0 +1,121 @@
+{
+  "config": {
+    "flow_title": "{name}",
+    "step": {
+      "user": {
+        "title": "Add LYWSD02 Clock",
+        "description": "Select a discovered device or enter a MAC address manually.",
+        "data": {
+          "mac": "MAC address",
+          "name": "Friendly name",
+          "frequency": "Sync frequency",
+          "temp_unit": "Temperature unit",
+          "clock_mode": "Clock mode"
+        }
+      },
+      "bluetooth_confirm": {
+        "title": "Configure LYWSD02 Clock",
+        "description": "Found {name} ({mac}). Review the settings below and confirm.",
+        "data": {
+          "name": "Friendly name",
+          "frequency": "Sync frequency",
+          "temp_unit": "Temperature unit",
+          "clock_mode": "Clock mode"
+        }
+      }
+    },
+    "error": {
+      "invalid_mac": "Invalid MAC address.",
+      "already_configured": "This device is already configured."
+    },
+    "abort": {
+      "already_configured": "This device is already configured.",
+      "no_devices_found": "No unconfigured LYWSD02 devices found."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "LYWSD02 Clock options",
+        "data": {
+          "frequency": "Sync frequency",
+          "temp_unit": "Temperature unit",
+          "clock_mode": "Clock mode"
+        }
+      }
+    }
+  },
+  "selector": {
+    "frequency": {
+      "options": {
+        "daily": "Daily",
+        "weekly": "Weekly (Sundays)",
+        "monthly": "Monthly (1st)"
+      }
+    },
+    "temp_unit": {
+      "options": {
+        "C": "Celsius",
+        "F": "Fahrenheit"
+      }
+    },
+    "clock_mode": {
+      "options": {
+        "12": "12-hour",
+        "24": "24-hour"
+      }
+    }
+  },
+  "entity": {
+    "button": {
+      "sync_now": {"name": "Sync Now"}
+    },
+    "switch": {
+      "auto_sync": {"name": "Auto Sync"}
+    },
+    "sensor": {
+      "last_sync": {"name": "Last Sync"},
+      "next_sync": {"name": "Next Sync"},
+      "last_sync_status": {
+        "name": "Last Sync Status",
+        "state": {
+          "success": "Success",
+          "failed": "Failed",
+          "never": "Never"
+        }
+      }
+    }
+  },
+  "services": {
+    "set_time": {
+      "name": "Set time",
+      "description": "Write the current time (or a custom timestamp) to an LYWSD02 clock.",
+      "fields": {
+        "mac": {
+          "name": "MAC",
+          "description": "Bluetooth MAC address of the device."
+        },
+        "timestamp": {
+          "name": "Timestamp",
+          "description": "UTC epoch seconds. Defaults to Home Assistant's current UTC time."
+        },
+        "tz_offset": {
+          "name": "Timezone offset",
+          "description": "Timezone offset in hours. Defaults to Home Assistant's local offset."
+        },
+        "temp_mode": {
+          "name": "Temperature unit",
+          "description": "C or F."
+        },
+        "clock_mode": {
+          "name": "Clock mode",
+          "description": "12 or 24."
+        },
+        "timeout": {
+          "name": "Timeout",
+          "description": "BLE connection timeout in seconds."
+        }
+      }
+    }
+  }
+}
