@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.3] - 2026-04-21
+
+### Fixed
+- pygatt (`gatttool`) now uses `reset_on_start=True`, matching
+  `h4/lywsd02` (and therefore `ashald/home-assistant-lywsd02`). This
+  briefly resets `hci0`, kicking Home Assistant's bluetooth scanner off
+  for a fraction of a second so that `gatttool` has exclusive access to
+  do its own scan and connect. HA's scanner auto-reconnects right after.
+  The previous `reset_on_start=False` was trying to be too polite with
+  HA's stack and was the root cause of all the connect timeouts on
+  setups where `hci0` is the reachable adapter.
+
+### Removed
+- `_write_via_bluetoothctl` full-write path (v0.9.1). The scripted
+  interactive session through stdin kept dumping help text instead of
+  executing the gatt submenu commands — the actual connect attempt
+  never ran. Not worth debugging further when the pygatt fix above
+  solves the real problem.
+
 ## [0.9.2] - 2026-04-21
 
 ### Fixed

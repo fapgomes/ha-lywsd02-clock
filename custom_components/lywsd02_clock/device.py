@@ -335,9 +335,15 @@ def _pygatt_sync_write(
 
     time_payload, unit_payload, mode_payload = payloads
     adapter = pygatt.GATTToolBackend()
+    # reset_on_start=True runs `hciconfig hci0 reset` before launching
+    # gatttool. This briefly takes the adapter down, kicking Home Assistant's
+    # bluetooth scanner off, which then auto-reconnects. During the gap
+    # gatttool has exclusive access and can complete its own scan + connect.
+    # This is the behaviour that ashald/home-assistant-lywsd02 (via
+    # h4/lywsd02 -> pygatt default) relies on.
     try:
-        adapter.start(reset_on_start=False)
-    except Exception as exc:  # noqa: BLE001 — gatttool may be missing
+        adapter.start(reset_on_start=True)
+    except Exception as exc:  # noqa: BLE001 — gatttool / hciconfig may be missing
         raise RuntimeError(f"pygatt GATTToolBackend.start failed: {exc}") from exc
 
     try:
@@ -606,19 +612,10 @@ async def set_time(
         errors.append("HA: no connectable BLEDevice cached for this MAC")
         _LOGGER.debug("HA has no connectable BLEDevice cached for %s; skipping HA path", mac)
 
-    # Path 2 — bluetoothctl script (connect + gatt write + disconnect).
-    # This is the only transport we have shown to reliably connect to the
-    # device when Home Assistant's Bluetooth integration is managing `hci0`.
-    try:
-        await _write_via_bluetoothctl(mac, payloads, direct_timeout)
-        _LOGGER.debug("Wrote time/unit/mode to %s via bluetoothctl", mac)
-        return
-    except DeviceCommunicationError as exc:
-        errors.append(f"bluetoothctl: {exc}")
-        _LOGGER.debug("bluetoothctl path failed for %s: %s", mac, exc)
-
-    # Path 3 — pygatt / gatttool on the local adapter. Still useful on
-    # hosts that don't have `bluetoothctl` available.
+    # Path 2 — pygatt / gatttool with `reset_on_start=True`. This matches
+    # what ashald/home-assistant-lywsd02 (via h4/lywsd02 -> pygatt) does:
+    # briefly reset hci0 so HA's scanner releases it, giving gatttool a
+    # clean window to connect and write.
     try:
         await _write_via_pygatt(mac, payloads, direct_timeout)
         _LOGGER.debug("Wrote time/unit/mode to %s via pygatt", mac)
