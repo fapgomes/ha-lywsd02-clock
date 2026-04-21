@@ -362,6 +362,37 @@ def _pygatt_sync_write(
             pass
 
 
+async def _bluetoothctl_scan(duration: float = 8.0) -> None:
+    """Run a short `bluetoothctl scan on` window so bluez populates its D-Bus
+    ObjectManager with any advertising device in range. Without this the
+    non-interactive `bluetoothctl connect` subprocess fails immediately with
+    "Device XX:... not available" whenever bluez hasn't already seen the
+    device (e.g. right after a Home Assistant restart).
+    """
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "bluetoothctl", "--timeout", str(int(duration)), "scan", "on",
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+    except FileNotFoundError:
+        _LOGGER.debug("bluetoothctl binary not available; skipping scan")
+        return
+    except Exception as exc:  # noqa: BLE001
+        _LOGGER.debug("bluetoothctl scan launch failed: %s", exc)
+        return
+    try:
+        await asyncio.wait_for(proc.wait(), timeout=duration + 5)
+    except asyncio.TimeoutError:
+        _LOGGER.debug("bluetoothctl scan did not exit; killing")
+        try:
+            proc.kill()
+            await proc.wait()
+        except Exception:  # noqa: BLE001
+            pass
+    _LOGGER.debug("bluetoothctl scan window finished (%.0fs)", duration)
+
+
 async def _write_via_bluetoothctl(
     mac: str,
     payloads: tuple[bytes, bytes, bytes],
@@ -371,10 +402,18 @@ async def _write_via_bluetoothctl(
 
     `bluetoothctl` talks to bluez over D-Bus and is the only transport we
     have so far shown to reliably connect to the device when Home
-    Assistant's Bluetooth integration is active on `hci0`. We script an
-    interactive session through stdin: connect, enter the gatt menu,
-    select each characteristic by UUID, write the payload, then disconnect.
+    Assistant's Bluetooth integration is active on `hci0`. We do this in
+    two phases:
+
+    1. Short `scan on` window so bluez registers the device in its
+       ObjectManager. The non-interactive `connect` command skips its own
+       scan, so without this it fails with "Device XX:... not available"
+       whenever bluez's tree doesn't already have the device.
+    2. Interactive script via stdin: connect, `menu gatt`,
+       `select-attribute` + `write` for each payload, disconnect, quit.
     """
+    await _bluetoothctl_scan(duration=8.0)
+
     time_payload, unit_payload, mode_payload = payloads
     hex_time = " ".join(f"0x{b:02X}" for b in time_payload)
     hex_unit = " ".join(f"0x{b:02X}" for b in unit_payload)

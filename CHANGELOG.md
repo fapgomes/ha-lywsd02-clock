@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.2] - 2026-04-21
+
+### Fixed
+- `bluetoothctl: did not report connection success` on hosts that had
+  just restarted (e.g. right after a Home Assistant restart). The non-
+  interactive `bluetoothctl connect` subprocess does not trigger its own
+  scan — if bluez's D-Bus tree does not already know the device, it fails
+  instantly with "Device XX:XX:XX:XX:XX:XX not available". Manual
+  interactive sessions had been working because interactive mode auto-
+  scans on `connect`.
+
+### Changed
+- `_write_via_bluetoothctl` now runs a short (~8 s) `bluetoothctl
+  --timeout 8 scan on` window before the connect+write script so bluez
+  has the device in its ObjectManager.
+
 ## [0.9.1] - 2026-04-21
 
 ### Added
