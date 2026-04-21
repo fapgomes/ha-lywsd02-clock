@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.1] - 2026-04-21
+
+### Fixed
+- `pygatt: No response received` after a successful GATT connection. The
+  LYWSD02 accepts time writes as "write without response" — requesting
+  a response was causing the write to time out at `char_write_handle`.
+  Setting `wait_for_response=False` matches what `h4/lywsd02` does and
+  lets the write succeed once pygatt has a live connection to the device.
+
+### Note
+- Before Home Assistant's Bluetooth stack can reach the device reliably,
+  `bluez` needs the device registered in its D-Bus tree. One-time manual
+  registration: run `bluetoothctl connect <mac>` from the HA host
+  terminal (the connection only needs to succeed once, then you can
+  disconnect). After that, all sync attempts via the local adapter
+  should succeed without further intervention.
+
 ## [0.8.0] - 2026-04-21
 
 ### Fixed

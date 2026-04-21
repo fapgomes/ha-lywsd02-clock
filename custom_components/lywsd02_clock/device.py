@@ -347,9 +347,9 @@ def _pygatt_sync_write(
             address_type=pygatt.BLEAddressType.public,
         )
         try:
-            device.char_write(UUID_TIME, time_payload, wait_for_response=True)
-            device.char_write(UUID_UNIT, unit_payload, wait_for_response=True)
-            device.char_write(UUID_TIME, mode_payload, wait_for_response=True)
+            device.char_write(UUID_TIME, time_payload, wait_for_response=False)
+            device.char_write(UUID_UNIT, unit_payload, wait_for_response=False)
+            device.char_write(UUID_TIME, mode_payload, wait_for_response=False)
         finally:
             try:
                 device.disconnect()
