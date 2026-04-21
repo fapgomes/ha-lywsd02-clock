@@ -6,6 +6,8 @@ import logging
 import struct
 from typing import Literal
 
+from bleak import BleakScanner
+from bleak.backends.device import BLEDevice
 from bleak_retry_connector import BleakClientWithServiceCache, establish_connection
 
 from homeassistant.components import bluetooth
@@ -17,6 +19,7 @@ from .const import DEFAULT_TIMEOUT, UUID_TIME, UUID_UNIT
 _LOGGER = logging.getLogger(__name__)
 
 ADVERTISEMENT_WAIT_SECONDS: float = 30.0
+DIRECT_SCAN_SECONDS: float = 15.0
 
 
 class DeviceNotFoundError(Exception):
@@ -41,15 +44,10 @@ def _build_mode_payload(clock_mode: int) -> bytes:
     return struct.pack("<IHB", 0, 0, value)
 
 
-async def _wait_for_ble_device(
+async def _wait_for_ha_advertisement(
     hass: HomeAssistant, mac: str, timeout: float
-):
-    """Return the connectable BLEDevice for mac, waiting briefly for a fresh advertisement."""
-    ble_device = bluetooth.async_ble_device_from_address(hass, mac, connectable=True)
-    if ble_device is not None:
-        return ble_device
-
-    _LOGGER.debug("No cached advertisement for %s; waiting up to %.0fs", mac, timeout)
+) -> BLEDevice | None:
+    """Wait for HA's Bluetooth stack to see a connectable advertisement from mac."""
     event = asyncio.Event()
 
     @callback
@@ -74,6 +72,39 @@ async def _wait_for_ble_device(
         unsub()
 
     return bluetooth.async_ble_device_from_address(hass, mac, connectable=True)
+
+
+async def _direct_bleak_scan(mac: str, timeout: float) -> BLEDevice | None:
+    """Fall back to a direct bleak scan on the local OS Bluetooth adapter."""
+    try:
+        return await BleakScanner.find_device_by_address(mac, timeout=timeout)
+    except Exception as exc:  # noqa: BLE001 — any scanner failure is a soft miss
+        _LOGGER.debug("Direct bleak scan for %s failed: %s", mac, exc)
+        return None
+
+
+async def _resolve_ble_device(
+    hass: HomeAssistant, mac: str, total_timeout: float
+) -> BLEDevice | None:
+    """Find a BLEDevice for mac, trying HA's cache, HA advertisement wait, then direct bleak scan."""
+    ble_device = bluetooth.async_ble_device_from_address(hass, mac, connectable=True)
+    if ble_device is not None:
+        return ble_device
+
+    ha_wait = max(1.0, total_timeout - DIRECT_SCAN_SECONDS)
+    _LOGGER.debug(
+        "No cached advertisement for %s; waiting up to %.0fs via HA BT stack", mac, ha_wait
+    )
+    ble_device = await _wait_for_ha_advertisement(hass, mac, ha_wait)
+    if ble_device is not None:
+        return ble_device
+
+    _LOGGER.debug(
+        "HA BT stack did not see %s; falling back to direct bleak scan for %.0fs",
+        mac,
+        DIRECT_SCAN_SECONDS,
+    )
+    return await _direct_bleak_scan(mac, DIRECT_SCAN_SECONDS)
 
 
 def _current_time_and_offset() -> tuple[int, int]:
@@ -106,11 +137,11 @@ async def set_time(
         if tz_offset_hours is None:
             tz_offset_hours = tz_now
 
-    wait_timeout = min(float(timeout), ADVERTISEMENT_WAIT_SECONDS)
-    ble_device = await _wait_for_ble_device(hass, mac, wait_timeout)
+    total_wait = min(float(timeout), ADVERTISEMENT_WAIT_SECONDS + DIRECT_SCAN_SECONDS)
+    ble_device = await _resolve_ble_device(hass, mac, total_wait)
     if ble_device is None:
         raise DeviceNotFoundError(
-            f"No advertisement received from {mac} within {wait_timeout:.0f}s. "
+            f"Could not find {mac} via HA Bluetooth or direct scan within {total_wait:.0f}s. "
             "Press any button on the clock to wake it, then try again. "
             "If this keeps failing, verify the MAC is correct and make sure "
             "a Bluetooth adapter or active BLE proxy is in range."

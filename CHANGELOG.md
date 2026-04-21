@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-04-21
+
+### Fixed
+- Sync failing with "No advertisement received" even when the device is
+  actually reachable from the host OS (the same scenario where
+  `ashald/home-assistant-lywsd02` succeeds).
+
+### Changed
+- `device.set_time` now falls back to a direct `BleakScanner.find_device_by_address`
+  scan on the local OS Bluetooth adapter when Home Assistant's Bluetooth cache
+  has no recent advertisement for the device. Order of attempts:
+  1. HA's cached advertisement (instant).
+  2. HA active-scan callback wait (up to ~30 s).
+  3. Direct bleak scan on the local adapter (up to 15 s).
+- Coordinator now logs the full traceback at `debug` when a sync fails.
+
+### Notes
+- The direct-bleak fallback only works with a local OS Bluetooth adapter.
+  Setups that rely exclusively on ESPHome BLE proxies will still need HA's
+  Bluetooth stack to see the advertisement (paths 1 or 2).
+
 ## [0.2.0] - 2026-04-21
 
 ### Added

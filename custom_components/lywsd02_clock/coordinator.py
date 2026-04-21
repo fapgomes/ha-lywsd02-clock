@@ -166,6 +166,7 @@ class LYWSD02Coordinator(DataUpdateCoordinator[None]):
             self.last_status = STATUS_FAILED
             self.last_error = str(exc)
             _LOGGER.warning("Sync failed for %s: %s", self.mac, exc)
+            _LOGGER.debug("Sync traceback for %s", self.mac, exc_info=exc)
             self.async_update_listeners()
             return False
         except Exception as exc:  # noqa: BLE001 — defensive catch for the coordinator
