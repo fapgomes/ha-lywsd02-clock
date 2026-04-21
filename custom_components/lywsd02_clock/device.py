@@ -21,6 +21,13 @@ try:
 except Exception:  # noqa: BLE001 — non-Linux or missing backend
     _BluezBackendScanner = None  # type: ignore[assignment]
 
+try:
+    import pygatt  # type: ignore[import-untyped]
+    _PYGATT_AVAILABLE = True
+except Exception:  # noqa: BLE001 — optional runtime dep
+    pygatt = None  # type: ignore[assignment]
+    _PYGATT_AVAILABLE = False
+
 from homeassistant.components import bluetooth
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.util import dt as dt_util
@@ -166,24 +173,39 @@ async def _discover_via_raw_bluez(mac: str, timeout: float) -> BLEDevice | None:
             found.set()
 
     scanner = None
-    for attempt in (
+    attempts = (
         # Current bleak (≥0.22): all three required
-        lambda: _BluezBackendScanner(
-            detection_callback=_on_detection,
-            service_uuids=None,
-            scanning_mode="active",
+        (
+            "kw_active_str",
+            lambda: _BluezBackendScanner(
+                detection_callback=_on_detection,
+                service_uuids=None,
+                scanning_mode="active",
+            ),
         ),
         # Positional-only signature
-        lambda: _BluezBackendScanner(_on_detection, None, "active"),
+        (
+            "pos_active_str",
+            lambda: _BluezBackendScanner(_on_detection, None, "active"),
+        ),
         # Older bleak: only callback kwarg
-        lambda: _BluezBackendScanner(detection_callback=_on_detection),
-        # Oldest: no args, use register_detection_callback afterwards
-        lambda: _BluezBackendScanner(),
-    ):
+        (
+            "kw_callback_only",
+            lambda: _BluezBackendScanner(detection_callback=_on_detection),
+        ),
+        # Oldest: no args
+        ("no_args", lambda: _BluezBackendScanner()),
+    )
+    for label, attempt in attempts:
         try:
             scanner = attempt()
+            _LOGGER.debug("Constructed BleakScannerBlueZDBus with signature %s", label)
             break
-        except TypeError:
+        except TypeError as exc:
+            _LOGGER.debug("Scanner signature %s failed: %s", label, exc)
+            continue
+        except Exception as exc:  # noqa: BLE001
+            _LOGGER.debug("Scanner signature %s errored: %s", label, exc)
             continue
     if scanner is None:
         _LOGGER.debug("Could not construct BleakScannerBlueZDBus with any known signature")
@@ -293,6 +315,64 @@ async def _write_via_bluezdbus_direct(
             _LOGGER.debug("bluezdbus disconnect failed for %s: %s", mac, exc)
 
 
+def _pygatt_sync_write(
+    mac: str,
+    payloads: tuple[bytes, bytes, bytes],
+    timeout: float,
+) -> None:
+    """Synchronous pygatt write — runs in an executor thread."""
+    import pygatt  # local import so the executor has the module
+
+    time_payload, unit_payload, mode_payload = payloads
+    adapter = pygatt.GATTToolBackend()
+    try:
+        adapter.start(reset_on_start=False)
+    except Exception as exc:  # noqa: BLE001 — gatttool may be missing
+        raise RuntimeError(f"pygatt GATTToolBackend.start failed: {exc}") from exc
+
+    try:
+        device = adapter.connect(
+            mac.upper(),
+            timeout=timeout,
+            address_type=pygatt.BLEAddressType.public,
+        )
+        try:
+            device.char_write(UUID_TIME, time_payload, wait_for_response=True)
+            device.char_write(UUID_UNIT, unit_payload, wait_for_response=True)
+            device.char_write(UUID_TIME, mode_payload, wait_for_response=True)
+        finally:
+            try:
+                device.disconnect()
+            except Exception:  # noqa: BLE001
+                pass
+    finally:
+        try:
+            adapter.stop()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+async def _write_via_pygatt(
+    mac: str,
+    payloads: tuple[bytes, bytes, bytes],
+    timeout: float,
+) -> None:
+    """Last-resort path — uses gatttool via pygatt, like the h4/lywsd02 library.
+
+    This path bypasses bleak, habluetooth, and bluez's high-level managed
+    discovery entirely. It works on Linux hosts where the `gatttool` binary
+    is installed (most bluez distributions ship it).
+    """
+    if not _PYGATT_AVAILABLE:
+        raise DeviceCommunicationError("pygatt not installed")
+
+    loop = asyncio.get_running_loop()
+    try:
+        await loop.run_in_executor(None, _pygatt_sync_write, mac, payloads, timeout)
+    except Exception as exc:  # noqa: BLE001
+        raise DeviceCommunicationError(f"pygatt failed: {exc}") from exc
+
+
 async def set_time(
     hass: HomeAssistant,
     mac: str,
@@ -355,18 +435,32 @@ async def set_time(
             direct_error,
         )
 
+    bluezdbus_error: str
     try:
         await _write_via_bluezdbus_direct(mac, payloads, direct_timeout)
         _LOGGER.debug("Wrote time/unit/mode to %s via bluezdbus backend", mac)
         return
-    except DeviceCommunicationError as bluezdbus_exc:
+    except DeviceCommunicationError as exc:
+        bluezdbus_error = str(exc)
+        _LOGGER.debug(
+            "bluezdbus-direct path failed for %s (%s); trying pygatt",
+            mac,
+            bluezdbus_error,
+        )
+
+    try:
+        await _write_via_pygatt(mac, payloads, direct_timeout)
+        _LOGGER.debug("Wrote time/unit/mode to %s via pygatt", mac)
+        return
+    except DeviceCommunicationError as pygatt_exc:
         raise DeviceNotFoundError(
             f"Could not reach {mac}. "
             f"HA Bluetooth path: {ha_error}. "
             f"BleakClient: {direct_error}. "
-            f"bluezdbus direct: {bluezdbus_exc}. "
+            f"bluezdbus direct: {bluezdbus_error}. "
+            f"pygatt: {pygatt_exc}. "
             "Press any button on the clock to wake it and try again. "
             "If you rely exclusively on a BLE proxy (no local adapter), check "
             "Settings → Devices & Services → Bluetooth to confirm the proxy is "
             "seeing advertisements from the device."
-        ) from bluezdbus_exc
+        ) from pygatt_exc

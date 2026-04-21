@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-04-21
+
+### Added
+- **`pygatt` fallback path** (path 4). Spawns `gatttool` out-of-process
+  and writes the payloads there, matching exactly how
+  `ashald/home-assistant-lywsd02` (via `h4/lywsd02`) reaches the device
+  on Linux hosts. This bypasses bleak, `habluetooth`, and bluez's
+  managed-discovery layer entirely. New requirement: `pygatt>=4.0.5`.
+  Requires `gatttool` on PATH — ships with most bluez distributions.
+- Debug logs now say which scanner signature was used (or why each one
+  failed), to make future bleak-signature changes easier to diagnose.
+
+### Changed
+- Connection fallback order is now:
+  1. HA Bluetooth stack (supports BLE proxies).
+  2. `BleakClient(mac)` through HA's wrapper.
+  3. `BleakClientBlueZDBus(mac)` + raw bluez scan — bypasses wrapper.
+  4. `pygatt` / `gatttool` subprocess — bypasses bleak entirely.
+- Error message now lists all four paths.
+
 ## [0.6.1] - 2026-04-21
 
 ### Fixed
