@@ -2,9 +2,10 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import struct
-from typing import Literal
+from typing import Any, Literal
 
 from bleak import BleakClient, BleakError
 from bleak.backends.device import BLEDevice
@@ -166,8 +167,31 @@ async def _write_via_bluezdbus_direct(
     time_payload, unit_payload, mode_payload = payloads
     client = _BluezBackendClient(mac, timeout=timeout)
 
+    connect_kwargs: dict[str, Any] = {}
     try:
-        await client.connect(timeout=timeout)
+        sig = inspect.signature(client.connect)
+        if "pair" in sig.parameters:
+            connect_kwargs["pair"] = False
+        if "timeout" in sig.parameters:
+            connect_kwargs["timeout"] = timeout
+    except (TypeError, ValueError):
+        pass
+
+    try:
+        await client.connect(**connect_kwargs)
+    except TypeError:
+        # Fallback for signatures we couldn't introspect (e.g. C-extension wrappers)
+        try:
+            await client.connect(False, timeout)  # (pair, timeout) positional
+        except TypeError:
+            try:
+                await client.connect()
+            except BleakError as exc:
+                raise DeviceCommunicationError(f"bluezdbus connect failed: {exc}") from exc
+            except Exception as exc:
+                raise DeviceCommunicationError(f"bluezdbus connect error: {exc}") from exc
+        except BleakError as exc:
+            raise DeviceCommunicationError(f"bluezdbus connect failed: {exc}") from exc
     except BleakError as exc:
         raise DeviceCommunicationError(f"bluezdbus connect failed: {exc}") from exc
     except Exception as exc:
