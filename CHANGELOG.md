@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] - 2026-04-21
+
+### Added
+- Automatic bluez D-Bus priming via `bluetoothctl connect`/`disconnect`
+  subprocess before the pygatt path. When Home Assistant's Bluetooth
+  integration holds `hci0` in managed-discovery mode, `gatttool` cannot
+  discover a device on its own and times out; `bluetoothctl` however
+  cooperates with HA's scan and consistently registers the device in
+  `/org/bluez/hciX/dev_XX_...`. Once registered, `gatttool` connects
+  instantly, and the subsequent `char_write` (now without response)
+  succeeds. Removes the previous requirement for a one-off manual
+  `bluetoothctl connect` from the HA host terminal.
+
 ## [0.8.1] - 2026-04-21
 
 ### Fixed

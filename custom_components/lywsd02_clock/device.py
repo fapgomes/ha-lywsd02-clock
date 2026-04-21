@@ -362,19 +362,82 @@ def _pygatt_sync_write(
             pass
 
 
+async def _prime_bluez_via_bluetoothctl(mac: str, timeout: float = 20.0) -> bool:
+    """Register the device in bluez's D-Bus tree using `bluetoothctl`.
+
+    Gatttool cannot discover devices when Home Assistant holds `hci0` busy with
+    its own discovery. `bluetoothctl` *does* coexist with HA's scan and, once
+    it connects successfully, bluez keeps the device at
+    `/org/bluez/hciX/dev_XX_XX_XX_XX_XX_XX` until the adapter is reset.
+    We immediately disconnect so that the subsequent pygatt connect can open
+    its own ACL link.
+    """
+    try:
+        conn_proc = await asyncio.create_subprocess_exec(
+            "bluetoothctl", "connect", mac,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+    except FileNotFoundError:
+        _LOGGER.debug("bluetoothctl binary unavailable; skipping bluez prime")
+        return False
+    except Exception as exc:  # noqa: BLE001
+        _LOGGER.debug("bluetoothctl prime launch failed: %s", exc)
+        return False
+
+    try:
+        stdout, _stderr = await asyncio.wait_for(conn_proc.communicate(), timeout=timeout)
+    except asyncio.TimeoutError:
+        _LOGGER.debug("bluetoothctl prime connect timed out for %s", mac)
+        try:
+            conn_proc.kill()
+            await conn_proc.wait()
+        except Exception:  # noqa: BLE001
+            pass
+        return False
+
+    out = stdout.decode(errors="replace")
+    ok = "Connection successful" in out or "Connected: yes" in out
+    _LOGGER.debug(
+        "bluetoothctl prime connect for %s: %s",
+        mac,
+        "ok" if ok else f"failed ({out[-120:].strip()})",
+    )
+
+    try:
+        dc_proc = await asyncio.create_subprocess_exec(
+            "bluetoothctl", "disconnect", mac,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        await asyncio.wait_for(dc_proc.wait(), timeout=10)
+    except Exception as exc:  # noqa: BLE001
+        _LOGGER.debug("bluetoothctl prime disconnect error: %s", exc)
+
+    return ok
+
+
 async def _write_via_pygatt(
     mac: str,
     payloads: tuple[bytes, bytes, bytes],
     timeout: float,
 ) -> None:
-    """Last-resort path — uses gatttool via pygatt, like the h4/lywsd02 library.
+    """Path via gatttool (pygatt).
 
-    This path bypasses bleak, habluetooth, and bluez's high-level managed
-    discovery entirely. It works on Linux hosts where the `gatttool` binary
-    is installed (most bluez distributions ship it).
+    Before invoking gatttool we prime bluez's D-Bus tree via
+    `bluetoothctl connect <mac>`, which consistently registers the device
+    in bluez's ObjectManager even when Home Assistant's Bluetooth integration
+    is actively scanning the adapter. Without this step gatttool's own scan
+    times out because `hci0` is already held by HA's managed discovery.
     """
     if not _PYGATT_AVAILABLE:
         raise DeviceCommunicationError("pygatt not installed")
+
+    primed = await _prime_bluez_via_bluetoothctl(mac)
+    if not primed:
+        _LOGGER.debug(
+            "Bluez prime did not succeed for %s; running pygatt anyway", mac
+        )
 
     loop = asyncio.get_running_loop()
     try:
