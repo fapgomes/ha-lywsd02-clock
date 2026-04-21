@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-04-21
+
+### Fixed
+- The v0.3.0 "direct bleak scan" fallback was not actually direct —
+  Home Assistant monkey-patches `bleak.BleakScanner` globally, so every
+  scanner instance inside the HA process reads from the same (empty) HA
+  cache that path 1 already failed on. The real "direct" path is via
+  `BleakClient(mac)`, which HA does *not* patch and which goes straight
+  to bluez on Linux. This matches how service-only plugins such as
+  `ashald/home-assistant-lywsd02` succeed even when HA's cache is empty.
+
+### Changed
+- Connection fallback rewritten. Order of attempts:
+  1. HA Bluetooth stack (supports BLE proxies).
+  2. Direct `BleakClient(mac)` via OS bluez — only works with a local
+     Bluetooth adapter on the Home Assistant host.
+- Error message now says which specific path failed and how, instead of
+  a generic "not found".
+
 ## [0.3.0] - 2026-04-21
 
 ### Fixed

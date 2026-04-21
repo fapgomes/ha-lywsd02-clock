@@ -6,7 +6,7 @@ import logging
 import struct
 from typing import Literal
 
-from bleak import BleakScanner
+from bleak import BleakClient, BleakError
 from bleak.backends.device import BLEDevice
 from bleak_retry_connector import BleakClientWithServiceCache, establish_connection
 
@@ -19,11 +19,11 @@ from .const import DEFAULT_TIMEOUT, UUID_TIME, UUID_UNIT
 _LOGGER = logging.getLogger(__name__)
 
 ADVERTISEMENT_WAIT_SECONDS: float = 30.0
-DIRECT_SCAN_SECONDS: float = 15.0
+DIRECT_CLIENT_TIMEOUT_SECONDS: float = 30.0
 
 
 class DeviceNotFoundError(Exception):
-    """Raised when the BLE stack has no record of the MAC."""
+    """Raised when no BLE path could reach the device."""
 
 
 class DeviceCommunicationError(Exception):
@@ -42,6 +42,14 @@ def _build_unit_payload(temp_unit: str) -> bytes:
 def _build_mode_payload(clock_mode: int) -> bytes:
     value = 0xAA if int(clock_mode) == 12 else 0x00
     return struct.pack("<IHB", 0, 0, value)
+
+
+def _current_time_and_offset() -> tuple[int, int]:
+    local_now = dt_util.now()
+    timestamp_utc = int(local_now.timestamp())
+    utcoffset = local_now.utcoffset()
+    tz_offset_hours = int(utcoffset.total_seconds() / 3600) if utcoffset else 0
+    return timestamp_utc, tz_offset_hours
 
 
 async def _wait_for_ha_advertisement(
@@ -74,45 +82,60 @@ async def _wait_for_ha_advertisement(
     return bluetooth.async_ble_device_from_address(hass, mac, connectable=True)
 
 
-async def _direct_bleak_scan(mac: str, timeout: float) -> BLEDevice | None:
-    """Fall back to a direct bleak scan on the local OS Bluetooth adapter."""
-    try:
-        return await BleakScanner.find_device_by_address(mac, timeout=timeout)
-    except Exception as exc:  # noqa: BLE001 — any scanner failure is a soft miss
-        _LOGGER.debug("Direct bleak scan for %s failed: %s", mac, exc)
-        return None
-
-
-async def _resolve_ble_device(
-    hass: HomeAssistant, mac: str, total_timeout: float
+async def _resolve_ble_device_via_ha(
+    hass: HomeAssistant, mac: str, timeout: float
 ) -> BLEDevice | None:
-    """Find a BLEDevice for mac, trying HA's cache, HA advertisement wait, then direct bleak scan."""
+    """Return a BLEDevice for mac from HA's Bluetooth stack, waiting briefly if needed."""
     ble_device = bluetooth.async_ble_device_from_address(hass, mac, connectable=True)
     if ble_device is not None:
         return ble_device
-
-    ha_wait = max(1.0, total_timeout - DIRECT_SCAN_SECONDS)
-    _LOGGER.debug(
-        "No cached advertisement for %s; waiting up to %.0fs via HA BT stack", mac, ha_wait
-    )
-    ble_device = await _wait_for_ha_advertisement(hass, mac, ha_wait)
-    if ble_device is not None:
-        return ble_device
-
-    _LOGGER.debug(
-        "HA BT stack did not see %s; falling back to direct bleak scan for %.0fs",
-        mac,
-        DIRECT_SCAN_SECONDS,
-    )
-    return await _direct_bleak_scan(mac, DIRECT_SCAN_SECONDS)
+    _LOGGER.debug("No cached advertisement for %s; waiting up to %.0fs via HA BT stack", mac, timeout)
+    return await _wait_for_ha_advertisement(hass, mac, timeout)
 
 
-def _current_time_and_offset() -> tuple[int, int]:
-    local_now = dt_util.now()
-    timestamp_utc = int(local_now.timestamp())
-    utcoffset = local_now.utcoffset()
-    tz_offset_hours = int(utcoffset.total_seconds() / 3600) if utcoffset else 0
-    return timestamp_utc, tz_offset_hours
+async def _write_via_retry_connector(
+    ble_device: BLEDevice,
+    mac: str,
+    payloads: tuple[bytes, bytes, bytes],
+) -> None:
+    """Connect through HA's Bluetooth stack (supports BLE proxies) and write the payloads."""
+    time_payload, unit_payload, mode_payload = payloads
+    try:
+        client = await establish_connection(
+            BleakClientWithServiceCache,
+            ble_device,
+            name=mac,
+            max_attempts=3,
+        )
+    except Exception as exc:
+        raise DeviceCommunicationError(f"HA connection failed: {exc}") from exc
+
+    try:
+        async with client:
+            await client.write_gatt_char(UUID_TIME, time_payload)
+            await client.write_gatt_char(UUID_UNIT, unit_payload)
+            await client.write_gatt_char(UUID_TIME, mode_payload)
+    except Exception as exc:
+        raise DeviceCommunicationError(f"HA GATT write failed: {exc}") from exc
+
+
+async def _write_via_direct_client(
+    mac: str,
+    payloads: tuple[bytes, bytes, bytes],
+    timeout: float,
+) -> None:
+    """Connect directly via BleakClient (Linux bluez cache), bypassing HA's scanner patch."""
+    time_payload, unit_payload, mode_payload = payloads
+    client = BleakClient(mac, timeout=timeout)
+    try:
+        async with client:
+            await client.write_gatt_char(UUID_TIME, time_payload)
+            await client.write_gatt_char(UUID_UNIT, unit_payload)
+            await client.write_gatt_char(UUID_TIME, mode_payload)
+    except BleakError as exc:
+        raise DeviceCommunicationError(f"direct connection failed: {exc}") from exc
+    except Exception as exc:
+        raise DeviceCommunicationError(f"direct connection error: {exc}") from exc
 
 
 async def set_time(
@@ -127,8 +150,12 @@ async def set_time(
 ) -> None:
     """Write time, temperature unit and clock mode to the device.
 
-    Raises DeviceNotFoundError if the BLE stack doesn't know the MAC, or
-    DeviceCommunicationError on any connect / GATT failure.
+    Tries two paths in order:
+      1. Home Assistant's Bluetooth stack (works with local adapters *and* BLE proxies).
+      2. Direct `BleakClient(mac)` via the OS bluez cache (local adapter only, but
+         works even when HA's cache has no fresh advertisement).
+
+    Raises DeviceNotFoundError if both paths fail.
     """
     if timestamp_utc is None or tz_offset_hours is None:
         ts_now, tz_now = _current_time_and_offset()
@@ -137,43 +164,38 @@ async def set_time(
         if tz_offset_hours is None:
             tz_offset_hours = tz_now
 
-    total_wait = min(float(timeout), ADVERTISEMENT_WAIT_SECONDS + DIRECT_SCAN_SECONDS)
-    ble_device = await _resolve_ble_device(hass, mac, total_wait)
-    if ble_device is None:
-        raise DeviceNotFoundError(
-            f"Could not find {mac} via HA Bluetooth or direct scan within {total_wait:.0f}s. "
-            "Press any button on the clock to wake it, then try again. "
-            "If this keeps failing, verify the MAC is correct and make sure "
-            "a Bluetooth adapter or active BLE proxy is in range."
-        )
-
-    time_payload = _build_time_payload(timestamp_utc, tz_offset_hours)
-    unit_payload = _build_unit_payload(temp_unit)
-    mode_payload = _build_mode_payload(clock_mode)
-
-    try:
-        client = await establish_connection(
-            BleakClientWithServiceCache,
-            ble_device,
-            name=mac,
-            max_attempts=3,
-        )
-    except Exception as exc:
-        raise DeviceCommunicationError(f"Connection failed: {exc}") from exc
-
-    try:
-        async with client:
-            await client.write_gatt_char(UUID_TIME, time_payload)
-            await client.write_gatt_char(UUID_UNIT, unit_payload)
-            await client.write_gatt_char(UUID_TIME, mode_payload)
-    except Exception as exc:
-        raise DeviceCommunicationError(f"GATT write failed: {exc}") from exc
-
-    _LOGGER.debug(
-        "Wrote time=%s tz=%+d temp=%s mode=%s to %s",
-        timestamp_utc,
-        tz_offset_hours,
-        temp_unit,
-        clock_mode,
-        mac,
+    payloads = (
+        _build_time_payload(timestamp_utc, tz_offset_hours),
+        _build_unit_payload(temp_unit),
+        _build_mode_payload(clock_mode),
     )
+
+    ha_wait = min(float(timeout), ADVERTISEMENT_WAIT_SECONDS)
+    ha_error: str
+
+    ble_device = await _resolve_ble_device_via_ha(hass, mac, ha_wait)
+    if ble_device is not None:
+        try:
+            await _write_via_retry_connector(ble_device, mac, payloads)
+            _LOGGER.debug("Wrote time/unit/mode to %s via HA Bluetooth", mac)
+            return
+        except DeviceCommunicationError as exc:
+            ha_error = str(exc)
+            _LOGGER.debug("HA path failed for %s (%s); falling back to direct", mac, ha_error)
+    else:
+        ha_error = f"no advertisement received within {ha_wait:.0f}s"
+        _LOGGER.debug("HA path found no advertisement for %s; trying direct", mac)
+
+    direct_timeout = min(float(timeout), DIRECT_CLIENT_TIMEOUT_SECONDS)
+    try:
+        await _write_via_direct_client(mac, payloads, direct_timeout)
+        _LOGGER.debug("Wrote time/unit/mode to %s via direct BleakClient", mac)
+    except DeviceCommunicationError as direct_exc:
+        raise DeviceNotFoundError(
+            f"Could not reach {mac}. HA Bluetooth path: {ha_error}. "
+            f"Direct connect: {direct_exc}. "
+            "Press any button on the clock to wake it and try again. "
+            "If you rely exclusively on a BLE proxy (no local adapter), check "
+            "Settings → Devices & Services → Bluetooth to confirm the proxy is "
+            "seeing advertisements from the device."
+        ) from direct_exc
