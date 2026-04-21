@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.1] - 2026-04-21
+
+### Added
+- Full write path via `bluetoothctl` subprocess (connect → `menu gatt` →
+  select-attribute → write → disconnect, piped through stdin). We had
+  proven that `bluetoothctl` reliably reaches the device over D-Bus when
+  HA holds `hci0`, but priming alone did not help `gatttool` which uses
+  legacy raw HCI sockets (different transport). Running the full write
+  through the same `bluetoothctl` session finally lets the integration
+  succeed on hosts where `hci0` is busy with HA's managed discovery.
+
+### Changed
+- Connection fallback order is now:
+  1. HA Bluetooth stack (when a connectable `BLEDevice` is already cached).
+  2. **`bluetoothctl` subprocess (full write).**
+  3. `pygatt` / `gatttool` (with the bluez-prime from v0.9.0).
+  4. `BleakClient(mac)` via HA wrapper.
+  5. `BleakClientBlueZDBus(mac)` via direct import.
+
 ## [0.9.0] - 2026-04-21
 
 ### Added

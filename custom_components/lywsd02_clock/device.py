@@ -362,6 +362,76 @@ def _pygatt_sync_write(
             pass
 
 
+async def _write_via_bluetoothctl(
+    mac: str,
+    payloads: tuple[bytes, bytes, bytes],
+    timeout: float,
+) -> None:
+    """Drive the full connect + GATT write via `bluetoothctl` subprocess.
+
+    `bluetoothctl` talks to bluez over D-Bus and is the only transport we
+    have so far shown to reliably connect to the device when Home
+    Assistant's Bluetooth integration is active on `hci0`. We script an
+    interactive session through stdin: connect, enter the gatt menu,
+    select each characteristic by UUID, write the payload, then disconnect.
+    """
+    time_payload, unit_payload, mode_payload = payloads
+    hex_time = " ".join(f"0x{b:02X}" for b in time_payload)
+    hex_unit = " ".join(f"0x{b:02X}" for b in unit_payload)
+    hex_mode = " ".join(f"0x{b:02X}" for b in mode_payload)
+
+    script = (
+        f"connect {mac}\n"
+        "menu gatt\n"
+        f"select-attribute {UUID_TIME}\n"
+        f'write "{hex_time}"\n'
+        f"select-attribute {UUID_UNIT}\n"
+        f'write "{hex_unit}"\n'
+        f"select-attribute {UUID_TIME}\n"
+        f'write "{hex_mode}"\n'
+        "back\n"
+        f"disconnect {mac}\n"
+        "quit\n"
+    )
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "bluetoothctl",
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+    except FileNotFoundError:
+        raise DeviceCommunicationError("bluetoothctl binary not found")
+    except Exception as exc:  # noqa: BLE001
+        raise DeviceCommunicationError(f"bluetoothctl launch error: {exc}") from exc
+
+    try:
+        stdout, _stderr = await asyncio.wait_for(
+            proc.communicate(input=script.encode()),
+            timeout=timeout,
+        )
+    except asyncio.TimeoutError:
+        try:
+            proc.kill()
+            await proc.wait()
+        except Exception:  # noqa: BLE001
+            pass
+        raise DeviceCommunicationError(f"bluetoothctl script timed out after {timeout:.0f}s")
+
+    output = stdout.decode(errors="replace")
+    _LOGGER.debug("bluetoothctl full-write output for %s:\n%s", mac, output[-1500:])
+
+    if "Connection successful" not in output and "Connected: yes" not in output:
+        raise DeviceCommunicationError(
+            f"bluetoothctl did not report connection success: {output[-300:].strip()}"
+        )
+    if "Failed to write" in output or "Invalid attribute" in output:
+        raise DeviceCommunicationError(
+            f"bluetoothctl reported a write error: {output[-300:].strip()}"
+        )
+
+
 async def _prime_bluez_via_bluetoothctl(mac: str, timeout: float = 20.0) -> bool:
     """Register the device in bluez's D-Bus tree using `bluetoothctl`.
 
@@ -497,9 +567,19 @@ async def set_time(
         errors.append("HA: no connectable BLEDevice cached for this MAC")
         _LOGGER.debug("HA has no connectable BLEDevice cached for %s; skipping HA path", mac)
 
-    # Path 2 — pygatt / gatttool on the local adapter. Tried BEFORE any
-    # bleak fallback because the bleak paths trigger HA scanning activity
-    # that can tie up hci0 right when gatttool needs it.
+    # Path 2 — bluetoothctl script (connect + gatt write + disconnect).
+    # This is the only transport we have shown to reliably connect to the
+    # device when Home Assistant's Bluetooth integration is managing `hci0`.
+    try:
+        await _write_via_bluetoothctl(mac, payloads, direct_timeout)
+        _LOGGER.debug("Wrote time/unit/mode to %s via bluetoothctl", mac)
+        return
+    except DeviceCommunicationError as exc:
+        errors.append(f"bluetoothctl: {exc}")
+        _LOGGER.debug("bluetoothctl path failed for %s: %s", mac, exc)
+
+    # Path 3 — pygatt / gatttool on the local adapter. Still useful on
+    # hosts that don't have `bluetoothctl` available.
     try:
         await _write_via_pygatt(mac, payloads, direct_timeout)
         _LOGGER.debug("Wrote time/unit/mode to %s via pygatt", mac)
