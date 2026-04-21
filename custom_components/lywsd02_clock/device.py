@@ -274,7 +274,8 @@ async def _write_via_bluezdbus_direct(
         _LOGGER.debug(
             "Raw bluez scan missed %s; trying bluezdbus connect by MAC anyway", mac
         )
-        client_target = mac
+        # bluez stores addresses uppercase; pass uppercase for the lookup to match.
+        client_target = mac.upper()
 
     time_payload, unit_payload, mode_payload = payloads
     client = _BluezBackendClient(client_target, timeout=timeout)
@@ -537,8 +538,11 @@ async def _write_via_bluetoothctl_then_dbus(
 
     write_error: Exception | None = None
     try:
-        # Step 3-5: bleak writes over the existing ACL
-        client = _BluezBackendClient(mac, timeout=timeout)
+        # Step 3-5: bleak writes over the existing ACL.
+        # bluez stores addresses uppercase in its D-Bus ObjectManager, and
+        # bleak's lookup is case-sensitive — pass uppercase so
+        # find_device_by_address actually matches.
+        client = _BluezBackendClient(mac.upper(), timeout=timeout)
         connect_kwargs: dict[str, Any] = {}
         try:
             sig = inspect.signature(client.connect)

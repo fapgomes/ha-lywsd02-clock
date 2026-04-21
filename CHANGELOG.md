@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.1] - 2026-04-21
+
+### Fixed
+- `bleak connect after bluetoothctl: Device with address ... was not
+  found`. The bluez D-Bus ObjectManager stores addresses in upper case,
+  and `BleakClientBlueZDBus`'s internal lookup is case-sensitive. We
+  were passing the lowercase MAC straight through, so the lookup
+  always missed. Now we upper-case before constructing the client in
+  both the `bluetoothctl+dbus` and the bluezdbus-direct paths.
+
 ## [0.10.0] - 2026-04-21
 
 ### Added
