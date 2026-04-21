@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.0] - 2026-04-21
+
+### Added
+- **bluetoothctl + D-Bus combined path** as the primary non-proxy sync
+  route. `bluetoothctl connect <mac>` via subprocess reliably establishes
+  an ACL link (cooperates with HA's managed discovery, does not need
+  `sudo`). While that ACL is open, `BleakClientBlueZDBus` — imported
+  directly so HA's wrapper can't interfere — does the three GATT writes
+  over D-Bus. Then `bluetoothctl disconnect` cleans up.
+
+### Fixed
+- `pygatt GATTToolBackend.start failed: No such file or directory: 'sudo'`
+  on HAOS. v0.9.3's `reset_on_start=True` relied on `sudo hciconfig
+  hci0 reset`, and HAOS has no `sudo`. The pygatt path now lives as
+  path 3 (fallback) and the new bluetoothctl+D-Bus path (2) is the one
+  that actually works on HAOS.
+
+### Changed
+- Sync fallback order:
+  1. HA Bluetooth stack (cached connectable `BLEDevice`).
+  2. **`bluetoothctl connect` + `BleakClientBlueZDBus` writes + `bluetoothctl disconnect`**.
+  3. `pygatt` / `gatttool` (still useful on non-HAOS hosts that have `sudo`).
+  4. `BleakClient(mac)` via HA wrapper.
+  5. `BleakClientBlueZDBus(mac)` standalone.
+
 ## [0.9.3] - 2026-04-21
 
 ### Fixed

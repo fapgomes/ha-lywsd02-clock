@@ -477,6 +477,120 @@ async def _write_via_bluetoothctl(
         )
 
 
+async def _write_via_bluetoothctl_then_dbus(
+    mac: str,
+    payloads: tuple[bytes, bytes, bytes],
+    timeout: float,
+) -> None:
+    """Establish an ACL via `bluetoothctl connect` (which bypasses HA's wrapper
+    and succeeds where everything else fails), keep the connection open, and
+    do the GATT writes via `BleakClientBlueZDBus` over D-Bus.
+
+    Order of operations:
+      1. `bluetoothctl connect <mac>` — subprocess. Reliably connects over
+         D-Bus even while HA holds `hci0` busy with managed discovery.
+      2. Short delay so bluez finishes populating the characteristic tree.
+      3. `BleakClientBlueZDBus(mac).connect(...)` — bleak detects the device
+         is already connected and fast-paths to GATT ops.
+      4. Three `write_gatt_char` calls.
+      5. `BleakClientBlueZDBus.disconnect()`.
+      6. `bluetoothctl disconnect <mac>` — subprocess, defensive cleanup.
+    """
+    if _BluezBackendClient is None:
+        raise DeviceCommunicationError(
+            "bluezdbus backend unavailable (non-Linux or missing dependency)"
+        )
+
+    time_payload, unit_payload, mode_payload = payloads
+
+    # Step 1: bluetoothctl connect
+    try:
+        conn_proc = await asyncio.create_subprocess_exec(
+            "bluetoothctl", "connect", mac,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+    except FileNotFoundError:
+        raise DeviceCommunicationError("bluetoothctl binary unavailable")
+    except Exception as exc:  # noqa: BLE001
+        raise DeviceCommunicationError(f"bluetoothctl launch error: {exc}") from exc
+
+    try:
+        stdout, _stderr = await asyncio.wait_for(conn_proc.communicate(), timeout=25)
+    except asyncio.TimeoutError:
+        try:
+            conn_proc.kill()
+            await conn_proc.wait()
+        except Exception:  # noqa: BLE001
+            pass
+        raise DeviceCommunicationError("bluetoothctl connect timed out")
+
+    out = stdout.decode(errors="replace")
+    if "Connection successful" not in out and "Connected: yes" not in out:
+        raise DeviceCommunicationError(
+            f"bluetoothctl connect did not succeed: {out[-300:].strip()}"
+        )
+    _LOGGER.debug("bluetoothctl connect for %s: ok", mac)
+
+    # Step 2: Let bluez finish resolving the GATT tree
+    await asyncio.sleep(2.0)
+
+    write_error: Exception | None = None
+    try:
+        # Step 3-5: bleak writes over the existing ACL
+        client = _BluezBackendClient(mac, timeout=timeout)
+        connect_kwargs: dict[str, Any] = {}
+        try:
+            sig = inspect.signature(client.connect)
+            if "pair" in sig.parameters:
+                connect_kwargs["pair"] = False
+            if "timeout" in sig.parameters:
+                connect_kwargs["timeout"] = timeout
+        except (TypeError, ValueError):
+            pass
+
+        try:
+            try:
+                await client.connect(**connect_kwargs)
+            except TypeError:
+                try:
+                    await client.connect(False, timeout)
+                except TypeError:
+                    await client.connect()
+        except BleakError as exc:
+            write_error = DeviceCommunicationError(f"bleak connect after bluetoothctl: {exc}")
+        except Exception as exc:  # noqa: BLE001
+            write_error = DeviceCommunicationError(f"bleak connect error: {exc}")
+        else:
+            try:
+                await client.write_gatt_char(UUID_TIME, time_payload, response=True)
+                await client.write_gatt_char(UUID_UNIT, unit_payload, response=True)
+                await client.write_gatt_char(UUID_TIME, mode_payload, response=True)
+            except BleakError as exc:
+                write_error = DeviceCommunicationError(f"bleak write after bluetoothctl: {exc}")
+            except Exception as exc:  # noqa: BLE001
+                write_error = DeviceCommunicationError(f"bleak write error: {exc}")
+            finally:
+                try:
+                    await client.disconnect()
+                except Exception as exc:  # noqa: BLE001
+                    _LOGGER.debug("bleak disconnect after bluetoothctl error: %s", exc)
+    finally:
+        # Step 6: bluetoothctl disconnect (defensive cleanup)
+        try:
+            dc_proc = await asyncio.create_subprocess_exec(
+                "bluetoothctl", "disconnect", mac,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            await asyncio.wait_for(dc_proc.wait(), timeout=10)
+        except Exception as exc:  # noqa: BLE001
+            _LOGGER.debug("bluetoothctl cleanup disconnect error: %s", exc)
+
+    if write_error is not None:
+        raise write_error
+
+
 async def _prime_bluez_via_bluetoothctl(mac: str, timeout: float = 20.0) -> bool:
     """Register the device in bluez's D-Bus tree using `bluetoothctl`.
 
@@ -612,10 +726,21 @@ async def set_time(
         errors.append("HA: no connectable BLEDevice cached for this MAC")
         _LOGGER.debug("HA has no connectable BLEDevice cached for %s; skipping HA path", mac)
 
-    # Path 2 — pygatt / gatttool with `reset_on_start=True`. This matches
+    # Path 2 — bluetoothctl (for ACL establishment) + bleak D-Bus GATT writes.
+    # This is the only combination we have shown to work end-to-end on hosts
+    # where HA's Bluetooth integration keeps hci0 busy with managed discovery.
+    try:
+        await _write_via_bluetoothctl_then_dbus(mac, payloads, direct_timeout)
+        _LOGGER.debug("Wrote time/unit/mode to %s via bluetoothctl+D-Bus", mac)
+        return
+    except DeviceCommunicationError as exc:
+        errors.append(f"bluetoothctl+dbus: {exc}")
+        _LOGGER.debug("bluetoothctl+dbus path failed for %s: %s", mac, exc)
+
+    # Path 3 — pygatt / gatttool with `reset_on_start=True`. This matches
     # what ashald/home-assistant-lywsd02 (via h4/lywsd02 -> pygatt) does:
     # briefly reset hci0 so HA's scanner releases it, giving gatttool a
-    # clean window to connect and write.
+    # clean window to connect and write. Requires sudo, which HAOS lacks.
     try:
         await _write_via_pygatt(mac, payloads, direct_timeout)
         _LOGGER.debug("Wrote time/unit/mode to %s via pygatt", mac)
