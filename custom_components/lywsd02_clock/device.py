@@ -16,6 +16,11 @@ try:
 except Exception:  # noqa: BLE001 — non-Linux or missing backend
     _BluezBackendClient = None  # type: ignore[assignment]
 
+try:
+    from bleak.backends.bluezdbus.scanner import BleakScannerBlueZDBus as _BluezBackendScanner
+except Exception:  # noqa: BLE001 — non-Linux or missing backend
+    _BluezBackendScanner = None  # type: ignore[assignment]
+
 from homeassistant.components import bluetooth
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.util import dt as dt_util
@@ -144,6 +149,51 @@ async def _write_via_direct_client(
         raise DeviceCommunicationError(f"BleakClient error: {exc}") from exc
 
 
+async def _discover_via_raw_bluez(mac: str, timeout: float) -> BLEDevice | None:
+    """Start an active scan with the bluezdbus backend scanner (bypassing HA's patch)
+    and wait for an advertisement from the requested MAC.
+    """
+    if _BluezBackendScanner is None:
+        return None
+
+    found = asyncio.Event()
+    found_device: dict[str, BLEDevice] = {}
+    upper_mac = mac.upper()
+
+    def _on_detection(device: BLEDevice, advertisement_data: Any) -> None:
+        if device.address.upper() == upper_mac:
+            found_device["device"] = device
+            found.set()
+
+    try:
+        scanner = _BluezBackendScanner(detection_callback=_on_detection)
+    except TypeError:
+        scanner = _BluezBackendScanner()
+        # Some bleak versions use add_detection_callback rather than ctor kwarg
+        if hasattr(scanner, "register_detection_callback"):
+            scanner.register_detection_callback(_on_detection)
+
+    try:
+        await scanner.start()
+    except Exception as exc:  # noqa: BLE001
+        _LOGGER.debug("Raw bluez scan start failed for %s: %s", mac, exc)
+        return None
+
+    try:
+        try:
+            await asyncio.wait_for(found.wait(), timeout=timeout)
+        except asyncio.TimeoutError:
+            _LOGGER.debug("Raw bluez scan did not see %s within %.0fs", mac, timeout)
+            return None
+    finally:
+        try:
+            await scanner.stop()
+        except Exception as exc:  # noqa: BLE001
+            _LOGGER.debug("Raw bluez scan stop failed for %s: %s", mac, exc)
+
+    return found_device.get("device")
+
+
 async def _write_via_bluezdbus_direct(
     mac: str,
     payloads: tuple[bytes, bytes, bytes],
@@ -156,16 +206,28 @@ async def _write_via_bluezdbus_direct(
     `pygatt`/`bluepy`-based plugins (`ashald/home-assistant-lywsd02`,
     `h4/lywsd02`) do.
 
-    The backend class is low-level and doesn't implement the async
-    context-manager protocol, so we call `connect()` / `disconnect()`
-    explicitly.
+    Starts its own active scan with the raw backend scanner first so that
+    bluez has a fresh D-Bus device object to connect to.
     """
     if _BluezBackendClient is None:
         raise DeviceCommunicationError(
             "bluez D-Bus backend unavailable (non-Linux host or missing dependency)"
         )
+
+    # Proactively scan for the device via the raw backend scanner.
+    scan_timeout = min(timeout, 20.0)
+    fresh_device = await _discover_via_raw_bluez(mac, scan_timeout)
+    if fresh_device is not None:
+        _LOGGER.debug("Raw bluez scan found %s", mac)
+        client_target: BLEDevice | str = fresh_device
+    else:
+        _LOGGER.debug(
+            "Raw bluez scan missed %s; trying bluezdbus connect by MAC anyway", mac
+        )
+        client_target = mac
+
     time_payload, unit_payload, mode_payload = payloads
-    client = _BluezBackendClient(mac, timeout=timeout)
+    client = _BluezBackendClient(client_target, timeout=timeout)
 
     connect_kwargs: dict[str, Any] = {}
     try:
