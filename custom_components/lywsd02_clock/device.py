@@ -10,6 +10,11 @@ from bleak import BleakClient, BleakError
 from bleak.backends.device import BLEDevice
 from bleak_retry_connector import BleakClientWithServiceCache, establish_connection
 
+try:
+    from bleak.backends.bluezdbus.client import BleakClientBlueZDBus as _BluezBackendClient
+except Exception:  # noqa: BLE001 — non-Linux or missing backend
+    _BluezBackendClient = None  # type: ignore[assignment]
+
 from homeassistant.components import bluetooth
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.util import dt as dt_util
@@ -124,7 +129,7 @@ async def _write_via_direct_client(
     payloads: tuple[bytes, bytes, bytes],
     timeout: float,
 ) -> None:
-    """Connect directly via BleakClient (Linux bluez cache), bypassing HA's scanner patch."""
+    """Connect via BleakClient (goes through habluetooth wrapper in HA)."""
     time_payload, unit_payload, mode_payload = payloads
     client = BleakClient(mac, timeout=timeout)
     try:
@@ -133,9 +138,38 @@ async def _write_via_direct_client(
             await client.write_gatt_char(UUID_UNIT, unit_payload)
             await client.write_gatt_char(UUID_TIME, mode_payload)
     except BleakError as exc:
-        raise DeviceCommunicationError(f"direct connection failed: {exc}") from exc
+        raise DeviceCommunicationError(f"BleakClient failed: {exc}") from exc
     except Exception as exc:
-        raise DeviceCommunicationError(f"direct connection error: {exc}") from exc
+        raise DeviceCommunicationError(f"BleakClient error: {exc}") from exc
+
+
+async def _write_via_bluezdbus_direct(
+    mac: str,
+    payloads: tuple[bytes, bytes, bytes],
+    timeout: float,
+) -> None:
+    """Connect by importing the bluezdbus backend class directly.
+
+    This bypasses `habluetooth`'s wrapper (which replaces the top-level
+    `bleak.BleakClient`) and talks to `bluez` over D-Bus, like the
+    `pygatt`/`bluepy`-based plugins (`ashald/home-assistant-lywsd02`,
+    `h4/lywsd02`) do.
+    """
+    if _BluezBackendClient is None:
+        raise DeviceCommunicationError(
+            "bluez D-Bus backend unavailable (non-Linux host or missing dependency)"
+        )
+    time_payload, unit_payload, mode_payload = payloads
+    client = _BluezBackendClient(mac, timeout=timeout)
+    try:
+        async with client:
+            await client.write_gatt_char(UUID_TIME, time_payload)
+            await client.write_gatt_char(UUID_UNIT, unit_payload)
+            await client.write_gatt_char(UUID_TIME, mode_payload)
+    except BleakError as exc:
+        raise DeviceCommunicationError(f"bluezdbus direct failed: {exc}") from exc
+    except Exception as exc:
+        raise DeviceCommunicationError(f"bluezdbus direct error: {exc}") from exc
 
 
 async def set_time(
@@ -187,15 +221,31 @@ async def set_time(
         _LOGGER.debug("HA path found no advertisement for %s; trying direct", mac)
 
     direct_timeout = min(float(timeout), DIRECT_CLIENT_TIMEOUT_SECONDS)
+    direct_error: str
     try:
         await _write_via_direct_client(mac, payloads, direct_timeout)
-        _LOGGER.debug("Wrote time/unit/mode to %s via direct BleakClient", mac)
-    except DeviceCommunicationError as direct_exc:
+        _LOGGER.debug("Wrote time/unit/mode to %s via BleakClient", mac)
+        return
+    except DeviceCommunicationError as exc:
+        direct_error = str(exc)
+        _LOGGER.debug(
+            "BleakClient path failed for %s (%s); trying bluezdbus backend directly",
+            mac,
+            direct_error,
+        )
+
+    try:
+        await _write_via_bluezdbus_direct(mac, payloads, direct_timeout)
+        _LOGGER.debug("Wrote time/unit/mode to %s via bluezdbus backend", mac)
+        return
+    except DeviceCommunicationError as bluezdbus_exc:
         raise DeviceNotFoundError(
-            f"Could not reach {mac}. HA Bluetooth path: {ha_error}. "
-            f"Direct connect: {direct_exc}. "
+            f"Could not reach {mac}. "
+            f"HA Bluetooth path: {ha_error}. "
+            f"BleakClient: {direct_error}. "
+            f"bluezdbus direct: {bluezdbus_exc}. "
             "Press any button on the clock to wake it and try again. "
             "If you rely exclusively on a BLE proxy (no local adapter), check "
             "Settings → Devices & Services → Bluetooth to confirm the proxy is "
             "seeing advertisements from the device."
-        ) from direct_exc
+        ) from bluezdbus_exc

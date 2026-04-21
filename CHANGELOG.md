@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-04-21
+
+### Fixed
+- v0.4.0 "direct BleakClient" was still being intercepted by Home Assistant's
+  `habluetooth` wrapper (HA patches `BleakClient` too, not just `BleakScanner`),
+  so the wrapper refused to connect with _"No backend with an available
+  connection slot that can reach address"_ whenever no HA scanner had a recent
+  advertisement for the device.
+
+### Added
+- Third connection path that imports `BleakClientBlueZDBus` from
+  `bleak.backends.bluezdbus.client` directly. That class reference is not
+  patched by `habluetooth`, so the connection goes straight to `bluez` over
+  D-Bus — the same route that `pygatt`/`bluepy`-based plugins
+  (`ashald/home-assistant-lywsd02`, `h4/lywsd02`) use. Linux only.
+
+### Changed
+- Connection fallback order is now:
+  1. HA Bluetooth stack (supports BLE proxies).
+  2. `BleakClient(mac)` (goes through HA's wrapper — still useful when it
+     succeeds for other reasons).
+  3. `BleakClientBlueZDBus(mac)` via direct import (bypasses HA wrapper).
+- Error message now lists which of the three paths failed and with what error.
+
 ## [0.4.0] - 2026-04-21
 
 ### Fixed
