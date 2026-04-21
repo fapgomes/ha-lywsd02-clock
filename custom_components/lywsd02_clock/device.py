@@ -154,6 +154,10 @@ async def _write_via_bluezdbus_direct(
     `bleak.BleakClient`) and talks to `bluez` over D-Bus, like the
     `pygatt`/`bluepy`-based plugins (`ashald/home-assistant-lywsd02`,
     `h4/lywsd02`) do.
+
+    The backend class is low-level and doesn't implement the async
+    context-manager protocol, so we call `connect()` / `disconnect()`
+    explicitly.
     """
     if _BluezBackendClient is None:
         raise DeviceCommunicationError(
@@ -161,15 +165,28 @@ async def _write_via_bluezdbus_direct(
         )
     time_payload, unit_payload, mode_payload = payloads
     client = _BluezBackendClient(mac, timeout=timeout)
+
     try:
-        async with client:
-            await client.write_gatt_char(UUID_TIME, time_payload)
-            await client.write_gatt_char(UUID_UNIT, unit_payload)
-            await client.write_gatt_char(UUID_TIME, mode_payload)
+        await client.connect(timeout=timeout)
     except BleakError as exc:
-        raise DeviceCommunicationError(f"bluezdbus direct failed: {exc}") from exc
+        raise DeviceCommunicationError(f"bluezdbus connect failed: {exc}") from exc
     except Exception as exc:
-        raise DeviceCommunicationError(f"bluezdbus direct error: {exc}") from exc
+        raise DeviceCommunicationError(f"bluezdbus connect error: {exc}") from exc
+
+    try:
+        try:
+            await client.write_gatt_char(UUID_TIME, time_payload, response=True)
+            await client.write_gatt_char(UUID_UNIT, unit_payload, response=True)
+            await client.write_gatt_char(UUID_TIME, mode_payload, response=True)
+        except BleakError as exc:
+            raise DeviceCommunicationError(f"bluezdbus write failed: {exc}") from exc
+        except Exception as exc:
+            raise DeviceCommunicationError(f"bluezdbus write error: {exc}") from exc
+    finally:
+        try:
+            await client.disconnect()
+        except Exception as exc:  # noqa: BLE001 — disconnect failure shouldn't mask real error
+            _LOGGER.debug("bluezdbus disconnect failed for %s: %s", mac, exc)
 
 
 async def set_time(

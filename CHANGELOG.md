@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.1] - 2026-04-21
+
+### Fixed
+- `bluezdbus direct error: ... does not support the asynchronous context
+  manager protocol`. The backend class `BleakClientBlueZDBus` is low-level
+  and doesn't implement `__aenter__`/`__aexit__` — the high-level
+  `BleakClient` facade does. Switched to explicit
+  `connect()` / `disconnect()` calls and explicit `response=True` on the
+  GATT writes.
+
 ## [0.5.0] - 2026-04-21
 
 ### Fixed
