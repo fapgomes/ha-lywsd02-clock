@@ -174,7 +174,17 @@ async def _discover_via_raw_bluez(mac: str, timeout: float) -> BLEDevice | None:
 
     scanner = None
     attempts = (
-        # Current bleak (≥0.22): all three required
+        # Current bleak: includes keyword-only `bluez` dict
+        (
+            "kw_full",
+            lambda: _BluezBackendScanner(
+                detection_callback=_on_detection,
+                service_uuids=None,
+                scanning_mode="active",
+                bluez={},
+            ),
+        ),
+        # Without bluez kwarg
         (
             "kw_active_str",
             lambda: _BluezBackendScanner(
@@ -405,62 +415,59 @@ async def set_time(
         _build_mode_payload(clock_mode),
     )
 
-    ha_wait = min(float(timeout), ADVERTISEMENT_WAIT_SECONDS)
-    ha_error: str
+    direct_timeout = min(float(timeout), DIRECT_CLIENT_TIMEOUT_SECONDS)
+    errors: list[str] = []
 
-    ble_device = await _resolve_ble_device_via_ha(hass, mac, ha_wait)
+    # Path 1 — HA Bluetooth stack, only when a connectable BLEDevice is
+    # already cached. No waiting, no active-scan triggers: that was what
+    # used to block gatttool on the local adapter.
+    ble_device = bluetooth.async_ble_device_from_address(hass, mac, connectable=True)
     if ble_device is not None:
         try:
             await _write_via_retry_connector(ble_device, mac, payloads)
             _LOGGER.debug("Wrote time/unit/mode to %s via HA Bluetooth", mac)
             return
         except DeviceCommunicationError as exc:
-            ha_error = str(exc)
-            _LOGGER.debug("HA path failed for %s (%s); falling back to direct", mac, ha_error)
+            errors.append(f"HA: {exc}")
+            _LOGGER.debug("HA path failed for %s: %s", mac, exc)
     else:
-        ha_error = f"no advertisement received within {ha_wait:.0f}s"
-        _LOGGER.debug("HA path found no advertisement for %s; trying direct", mac)
+        errors.append("HA: no connectable BLEDevice cached for this MAC")
+        _LOGGER.debug("HA has no connectable BLEDevice cached for %s; skipping HA path", mac)
 
-    direct_timeout = min(float(timeout), DIRECT_CLIENT_TIMEOUT_SECONDS)
-    direct_error: str
+    # Path 2 — pygatt / gatttool on the local adapter. Tried BEFORE any
+    # bleak fallback because the bleak paths trigger HA scanning activity
+    # that can tie up hci0 right when gatttool needs it.
+    try:
+        await _write_via_pygatt(mac, payloads, direct_timeout)
+        _LOGGER.debug("Wrote time/unit/mode to %s via pygatt", mac)
+        return
+    except DeviceCommunicationError as exc:
+        errors.append(f"pygatt: {exc}")
+        _LOGGER.debug("pygatt path failed for %s: %s", mac, exc)
+
+    # Path 3 — direct BleakClient (goes through habluetooth wrapper).
     try:
         await _write_via_direct_client(mac, payloads, direct_timeout)
         _LOGGER.debug("Wrote time/unit/mode to %s via BleakClient", mac)
         return
     except DeviceCommunicationError as exc:
-        direct_error = str(exc)
-        _LOGGER.debug(
-            "BleakClient path failed for %s (%s); trying bluezdbus backend directly",
-            mac,
-            direct_error,
-        )
+        errors.append(f"BleakClient: {exc}")
+        _LOGGER.debug("BleakClient path failed for %s: %s", mac, exc)
 
-    bluezdbus_error: str
+    # Path 4 — bluezdbus backend direct (bypasses habluetooth wrapper).
     try:
         await _write_via_bluezdbus_direct(mac, payloads, direct_timeout)
         _LOGGER.debug("Wrote time/unit/mode to %s via bluezdbus backend", mac)
         return
     except DeviceCommunicationError as exc:
-        bluezdbus_error = str(exc)
-        _LOGGER.debug(
-            "bluezdbus-direct path failed for %s (%s); trying pygatt",
-            mac,
-            bluezdbus_error,
-        )
+        errors.append(f"bluezdbus: {exc}")
+        _LOGGER.debug("bluezdbus path failed for %s: %s", mac, exc)
 
-    try:
-        await _write_via_pygatt(mac, payloads, direct_timeout)
-        _LOGGER.debug("Wrote time/unit/mode to %s via pygatt", mac)
-        return
-    except DeviceCommunicationError as pygatt_exc:
-        raise DeviceNotFoundError(
-            f"Could not reach {mac}. "
-            f"HA Bluetooth path: {ha_error}. "
-            f"BleakClient: {direct_error}. "
-            f"bluezdbus direct: {bluezdbus_error}. "
-            f"pygatt: {pygatt_exc}. "
-            "Press any button on the clock to wake it and try again. "
-            "If you rely exclusively on a BLE proxy (no local adapter), check "
-            "Settings → Devices & Services → Bluetooth to confirm the proxy is "
-            "seeing advertisements from the device."
-        ) from pygatt_exc
+    raise DeviceNotFoundError(
+        f"Could not reach {mac}. Tried: "
+        + "; ".join(errors)
+        + ". Press any button on the clock to wake it and try again. "
+        "If the clock is only reachable via a passive BLE proxy, the HA path "
+        "won't be able to open a connection and the local gatttool path needs "
+        "the clock in range of the Home Assistant host's own Bluetooth adapter."
+    )

@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-04-21
+
+### Fixed
+- `pygatt`/`gatttool` path timing out because of interference from Home
+  Assistant's active BLE scanning. Our previous advertisement-wait phase
+  registered a callback in `ACTIVE` scanning mode, which asked HA to
+  keep `hci0` in active-scan mode. When `gatttool` then tried to
+  acquire the adapter for a connection it could not do its own active
+  scan and timed out. This matched the failure mode the user was seeing
+  while the very similar `ashald/home-assistant-lywsd02` plugin kept
+  working in the same setup (because that plugin does not register any
+  HA scanning callbacks).
+
+### Changed
+- Sync flow reworked:
+  1. HA Bluetooth stack — only used when a connectable `BLEDevice` is
+     already cached. No waits, no active-scan activation. This lets
+     proxy-connectable setups short-circuit, while other setups skip it.
+  2. `pygatt` / `gatttool` on the local adapter (was path 4, now runs
+     second so it gets `hci0` unmolested).
+  3. `BleakClient(mac)` via HA wrapper.
+  4. `BleakClientBlueZDBus(mac)` via direct import.
+- The 30-second advertisement-wait and associated error messaging are
+  gone.
+- `BleakScannerBlueZDBus` construction now also tries the newer
+  `bluez={}` keyword-only signature as a first attempt.
+
+### Kept
+- Auto-discovery via `manifest.json` Bluetooth matcher is unchanged.
+
 ## [0.7.0] - 2026-04-21
 
 ### Added
