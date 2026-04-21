@@ -45,38 +45,24 @@
       }
     }
   },
-  "selector": {
-    "frequency": {
-      "options": {
-        "daily": "Daily",
-        "weekly": "Weekly (Sundays)",
-        "monthly": "Monthly (1st)",
-        "dst_only": "DST transitions only (no scheduled sync)"
-      }
-    },
-    "temp_unit": {
-      "options": {
-        "C": "Celsius",
-        "F": "Fahrenheit"
-      }
-    },
-    "clock_mode": {
-      "options": {
-        "12": "12-hour",
-        "24": "24-hour"
-      }
-    }
-  },
   "entity": {
     "button": {
-      "sync_now": {"name": "Sync now"}
+      "sync_now": {
+        "name": "Sync now"
+      }
     },
     "switch": {
-      "auto_sync": {"name": "Auto sync"}
+      "auto_sync": {
+        "name": "Auto sync"
+      }
     },
     "sensor": {
-      "last_sync": {"name": "Last sync"},
-      "next_sync": {"name": "Next sync"},
+      "last_sync": {
+        "name": "Last sync"
+      },
+      "next_sync": {
+        "name": "Next sync"
+      },
       "last_sync_status": {
         "name": "Sync status",
         "state": {

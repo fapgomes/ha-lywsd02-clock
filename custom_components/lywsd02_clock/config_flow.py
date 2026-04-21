@@ -37,6 +37,7 @@ from .const import (
     DEFAULT_TEMP_UNIT,
     DOMAIN,
     FREQUENCY_DAILY,
+    FREQUENCY_DST_ONLY,
     FREQUENCY_MONTHLY,
     FREQUENCY_WEEKLY,
     TEMP_UNIT_C,
@@ -66,6 +67,10 @@ def _frequency_selector() -> SelectSelector:
                 SelectOptionDict(value=FREQUENCY_DAILY, label="Daily"),
                 SelectOptionDict(value=FREQUENCY_WEEKLY, label="Weekly (Sundays)"),
                 SelectOptionDict(value=FREQUENCY_MONTHLY, label="Monthly (1st)"),
+                SelectOptionDict(
+                    value=FREQUENCY_DST_ONLY,
+                    label="DST transitions only (no scheduled sync)",
+                ),
             ],
             mode=SelectSelectorMode.DROPDOWN,
         )

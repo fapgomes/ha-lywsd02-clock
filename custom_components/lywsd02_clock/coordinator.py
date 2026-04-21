@@ -23,6 +23,7 @@ from .const import (
     DOMAIN,
     DST_CHECK_MINUTE,
     FREQUENCY_DAILY,
+    FREQUENCY_DST_ONLY,
     FREQUENCY_MONTHLY,
     FREQUENCY_WEEKLY,
     STATUS_FAILED,
@@ -43,10 +44,13 @@ def is_sync_day(now: datetime, frequency: str) -> bool:
         return now.weekday() == 6
     if frequency == FREQUENCY_MONTHLY:
         return now.day == 1
+    # FREQUENCY_DST_ONLY: never on the scheduled tick; DST check handles it.
     return False
 
 
-def compute_next_sync(now: datetime, frequency: str) -> datetime:
+def compute_next_sync(now: datetime, frequency: str) -> datetime | None:
+    if frequency == FREQUENCY_DST_ONLY:
+        return None
     candidate = now.replace(hour=SYNC_HOUR, minute=SYNC_MINUTE, second=0, microsecond=0)
     if candidate <= now:
         candidate += timedelta(days=1)
@@ -182,3 +186,8 @@ class LYWSD02Coordinator(DataUpdateCoordinator[None]):
         if not self.auto_sync_enabled:
             return None
         return compute_next_sync(dt_util.now(), self.frequency)
+
+    async def async_initial_sync_if_needed(self) -> None:
+        """Trigger a one-shot sync if this coordinator has never synced yet."""
+        if self.last_sync is None and self.auto_sync_enabled:
+            await self.async_sync()

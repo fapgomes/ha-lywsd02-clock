@@ -1,6 +1,7 @@
 """BLE protocol layer for the LYWSD02 clock."""
 from __future__ import annotations
 
+import asyncio
 import logging
 import struct
 from typing import Literal
@@ -8,12 +9,14 @@ from typing import Literal
 from bleak_retry_connector import BleakClientWithServiceCache, establish_connection
 
 from homeassistant.components import bluetooth
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.util import dt as dt_util
 
 from .const import DEFAULT_TIMEOUT, UUID_TIME, UUID_UNIT
 
 _LOGGER = logging.getLogger(__name__)
+
+ADVERTISEMENT_WAIT_SECONDS: float = 30.0
 
 
 class DeviceNotFoundError(Exception):
@@ -36,6 +39,41 @@ def _build_unit_payload(temp_unit: str) -> bytes:
 def _build_mode_payload(clock_mode: int) -> bytes:
     value = 0xAA if int(clock_mode) == 12 else 0x00
     return struct.pack("<IHB", 0, 0, value)
+
+
+async def _wait_for_ble_device(
+    hass: HomeAssistant, mac: str, timeout: float
+):
+    """Return the connectable BLEDevice for mac, waiting briefly for a fresh advertisement."""
+    ble_device = bluetooth.async_ble_device_from_address(hass, mac, connectable=True)
+    if ble_device is not None:
+        return ble_device
+
+    _LOGGER.debug("No cached advertisement for %s; waiting up to %.0fs", mac, timeout)
+    event = asyncio.Event()
+
+    @callback
+    def _on_advertisement(
+        service_info: bluetooth.BluetoothServiceInfoBleak,
+        change: bluetooth.BluetoothChange,
+    ) -> None:
+        event.set()
+
+    unsub = bluetooth.async_register_callback(
+        hass,
+        _on_advertisement,
+        bluetooth.BluetoothCallbackMatcher(address=mac.upper(), connectable=True),
+        bluetooth.BluetoothScanningMode.ACTIVE,
+    )
+    try:
+        try:
+            await asyncio.wait_for(event.wait(), timeout=timeout)
+        except asyncio.TimeoutError:
+            return None
+    finally:
+        unsub()
+
+    return bluetooth.async_ble_device_from_address(hass, mac, connectable=True)
 
 
 def _current_time_and_offset() -> tuple[int, int]:
@@ -68,10 +106,14 @@ async def set_time(
         if tz_offset_hours is None:
             tz_offset_hours = tz_now
 
-    ble_device = bluetooth.async_ble_device_from_address(hass, mac, connectable=True)
+    wait_timeout = min(float(timeout), ADVERTISEMENT_WAIT_SECONDS)
+    ble_device = await _wait_for_ble_device(hass, mac, wait_timeout)
     if ble_device is None:
         raise DeviceNotFoundError(
-            f"No BLE device with MAC {mac} known to the Bluetooth stack"
+            f"No advertisement received from {mac} within {wait_timeout:.0f}s. "
+            "Press any button on the clock to wake it, then try again. "
+            "If this keeps failing, verify the MAC is correct and make sure "
+            "a Bluetooth adapter or active BLE proxy is in range."
         )
 
     time_payload = _build_time_payload(timestamp_utc, tz_offset_hours)

@@ -8,8 +8,9 @@ Unlike service-only plugins, this is a full integration with UI setup, per-devic
 
 - **Automatic discovery** — LYWSD02 devices seen via your Bluetooth adapter or a BLE proxy appear as a discovery card in *Settings → Devices & Services*.
 - **UI-driven setup** — no YAML. One config entry per clock.
-- **Configurable cadence** — `daily`, `weekly` (Sundays) or `monthly` (day 1), always at 03:30 local time.
-- **Automatic DST** — a daily check at 03:35 forces a sync whenever the local UTC offset changes.
+- **Configurable cadence** — `daily`, `weekly` (Sundays), `monthly` (day 1) or `DST-only`. Scheduled syncs always fire at 03:30 local time.
+- **Automatic DST** — a daily check at 03:35 forces a sync whenever the local UTC offset changes, independently of the chosen frequency. In `DST-only` mode this is the *only* automatic trigger.
+- **Initial sync on setup** — the first successful sync runs automatically when the device is first added, so the clock is correct right away even in `DST-only` mode.
 - **Per-device entities**:
   - `button.<name>_sync_now` — run a manual sync now.
   - `switch.<name>_auto_sync` — enable/disable the schedule for this device.
@@ -146,6 +147,7 @@ The LYWSD02 runs on a single CR2032 cell. Every sync wakes the BLE stack and wri
 
 | Frequency | Expected battery life | Notes |
 |---|---|---|
+| DST-only | ~2+ years | Only the twice-a-year DST transitions plus the initial sync. Relies on the clock's native accuracy between transitions. |
 | Monthly | ~1.5–2 years | DST transitions still trigger a sync when they happen. |
 | Weekly | ~12–18 months | Reasonable middle ground. |
 | Daily | ~8–12 months | Default. Good enough for almost everyone. |
