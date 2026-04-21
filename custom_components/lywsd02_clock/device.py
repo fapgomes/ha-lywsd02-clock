@@ -165,13 +165,31 @@ async def _discover_via_raw_bluez(mac: str, timeout: float) -> BLEDevice | None:
             found_device["device"] = device
             found.set()
 
-    try:
-        scanner = _BluezBackendScanner(detection_callback=_on_detection)
-    except TypeError:
-        scanner = _BluezBackendScanner()
-        # Some bleak versions use add_detection_callback rather than ctor kwarg
-        if hasattr(scanner, "register_detection_callback"):
-            scanner.register_detection_callback(_on_detection)
+    scanner = None
+    for attempt in (
+        # Current bleak (≥0.22): all three required
+        lambda: _BluezBackendScanner(
+            detection_callback=_on_detection,
+            service_uuids=None,
+            scanning_mode="active",
+        ),
+        # Positional-only signature
+        lambda: _BluezBackendScanner(_on_detection, None, "active"),
+        # Older bleak: only callback kwarg
+        lambda: _BluezBackendScanner(detection_callback=_on_detection),
+        # Oldest: no args, use register_detection_callback afterwards
+        lambda: _BluezBackendScanner(),
+    ):
+        try:
+            scanner = attempt()
+            break
+        except TypeError:
+            continue
+    if scanner is None:
+        _LOGGER.debug("Could not construct BleakScannerBlueZDBus with any known signature")
+        return None
+    if hasattr(scanner, "register_detection_callback") and not hasattr(scanner, "_callback"):
+        scanner.register_detection_callback(_on_detection)
 
     try:
         await scanner.start()
