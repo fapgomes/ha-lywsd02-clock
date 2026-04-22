@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.4] - 2026-04-22
+
+### Changed
+- pygatt path now retries up to 3 times internally. The first attempt
+  frequently races with HA's bluetooth scanner re-acquiring `hci0`
+  right after `hciconfig reset`; subsequent attempts usually land in a
+  window where `gatttool` gets enough breathing room to complete its
+  own LE scan and connect. Previous behaviour relied on the user
+  pressing Sync now twice.
+- Added a short 500 ms settle after `reset_on_start` before connect to
+  give `gatttool`'s scan a clean start.
+
 ## [0.11.3] - 2026-04-22
 
 ### Fixed

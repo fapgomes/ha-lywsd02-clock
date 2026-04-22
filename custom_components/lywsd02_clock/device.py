@@ -379,60 +379,83 @@ def _pygatt_sync_write(
     payloads: tuple[bytes, bytes, bytes],
     timeout: float,
 ) -> None:
-    """Synchronous pygatt write — runs in an executor thread."""
+    """Synchronous pygatt write — runs in an executor thread.
+
+    Retries up to 3 times. The first attempt often races with HA's
+    bluetooth scanner re-acquiring `hci0` right after `hciconfig reset`;
+    subsequent attempts usually land in a window where `gatttool` gets
+    enough breathing room to complete its own scan and connect.
+    """
+    import time as _time
     import pygatt  # local import so the executor has the module
 
     time_payload, unit_payload, mode_payload = payloads
-    adapter = pygatt.GATTToolBackend()
-    # reset_on_start=True runs `hciconfig hci0 reset` before launching
-    # gatttool. This briefly takes the adapter down, kicking Home Assistant's
-    # bluetooth scanner off, which then auto-reconnects. During the gap
-    # gatttool has exclusive access and can complete its own scan + connect.
-    # This is the behaviour that ashald/home-assistant-lywsd02 (via
-    # h4/lywsd02 -> pygatt default) relies on.
-    try:
-        adapter.start(reset_on_start=True)
-    except Exception as exc:  # noqa: BLE001 — gatttool / hciconfig may be missing
-        raise RuntimeError(f"pygatt GATTToolBackend.start failed: {exc}") from exc
+    writes = (
+        (UUID_TIME, time_payload, "time"),
+        (UUID_UNIT, unit_payload, "unit"),
+        (UUID_TIME, mode_payload, "mode"),
+    )
 
-    try:
-        device = adapter.connect(
-            mac.upper(),
-            timeout=timeout,
-            address_type=pygatt.BLEAddressType.public,
-        )
+    max_attempts = 3
+    per_attempt_timeout = max(5.0, float(timeout) / max_attempts)
+    last_exc: Exception | None = None
+
+    for attempt in range(1, max_attempts + 1):
+        adapter = pygatt.GATTToolBackend()
         try:
-            # Match h4/lywsd02 protocol semantics: Write-Request
-            # (wait_for_response=True). The LYWSD02 firmware persists the
-            # time/unit/mode writes only when they arrive as Write-Request
-            # PDUs; Write-Command (fire-and-forget) is silently dropped.
-            #
-            # The clock sometimes does not send the Write-Response back in
-            # time, which surfaces as `NotificationTimeout`. The write was
-            # still delivered on the BLE link, so we log and continue.
-            writes = (
-                (UUID_TIME, time_payload, "time"),
-                (UUID_UNIT, unit_payload, "unit"),
-                (UUID_TIME, mode_payload, "mode"),
-            )
-            for char_uuid, payload, label in writes:
+            adapter.start(reset_on_start=True)
+        except Exception as exc:  # noqa: BLE001
+            raise RuntimeError(
+                f"pygatt GATTToolBackend.start failed: {exc}"
+            ) from exc
+
+        # Brief settle after `hciconfig reset` so HA's scanner hasn't fully
+        # re-acquired hci0 before `gatttool` starts its own LE scan.
+        _time.sleep(0.5)
+
+        try:
+            try:
+                device = adapter.connect(
+                    mac.upper(),
+                    timeout=per_attempt_timeout,
+                    address_type=pygatt.BLEAddressType.public,
+                )
+            except pygatt.exceptions.NotConnectedError as exc:
+                last_exc = exc
+                _LOGGER.debug(
+                    "pygatt connect attempt %d/%d failed: %s",
+                    attempt,
+                    max_attempts,
+                    exc,
+                )
+                continue
+
+            try:
+                for char_uuid, payload, label in writes:
+                    try:
+                        device.char_write(
+                            char_uuid, payload, wait_for_response=True
+                        )
+                    except pygatt.exceptions.NotificationTimeout:
+                        _LOGGER.debug(
+                            "pygatt %s write: no ACK from device, assuming delivered",
+                            label,
+                        )
+                return  # success
+            finally:
                 try:
-                    device.char_write(char_uuid, payload, wait_for_response=True)
-                except pygatt.exceptions.NotificationTimeout:
-                    _LOGGER.debug(
-                        "pygatt %s write: no ACK from device, assuming delivered",
-                        label,
-                    )
+                    device.disconnect()
+                except Exception:  # noqa: BLE001
+                    pass
         finally:
             try:
-                device.disconnect()
+                adapter.stop()
             except Exception:  # noqa: BLE001
                 pass
-    finally:
-        try:
-            adapter.stop()
-        except Exception:  # noqa: BLE001
-            pass
+
+    raise RuntimeError(
+        f"pygatt failed after {max_attempts} attempts; last error: {last_exc}"
+    )
 
 
 def _lywsd02_lib_sync_write(
