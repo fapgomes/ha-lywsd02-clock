@@ -79,6 +79,36 @@ def _patch_pygatt_no_sudo() -> None:
 
 _patch_pygatt_no_sudo()
 
+
+class _PygattNoResponseFilter(logging.Filter):
+    """Suppress pygatt's ERROR traceback on missing Write-Response ACKs.
+
+    The LYWSD02 firmware frequently does not send the Write-Response back
+    after a successful write. pygatt treats this as an error and dumps a
+    full `NotificationTimeout` traceback at ERROR level *before* raising
+    the exception we catch in `_pygatt_sync_write`. Those tracebacks are
+    noise — the writes were delivered on the link, hence the clock
+    actually updates. Drop the log record to keep the log clean.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:  # noqa: A003
+        if record.levelno >= logging.ERROR:
+            try:
+                message = record.getMessage()
+            except Exception:  # noqa: BLE001
+                message = ""
+            if "No response received" in message:
+                return False
+            if record.exc_info and "NotificationTimeout" in str(record.exc_info):
+                return False
+        return True
+
+
+logging.getLogger("pygatt.backends.gatttool.gatttool").addFilter(
+    _PygattNoResponseFilter()
+)
+
+
 ADVERTISEMENT_WAIT_SECONDS: float = 30.0
 DIRECT_CLIENT_TIMEOUT_SECONDS: float = 30.0
 

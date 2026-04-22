@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.5] - 2026-04-22
+
+### Fixed
+- Cosmetic log noise: `pygatt` was dumping a full `NotificationTimeout`
+  traceback at ERROR level whenever the LYWSD02 skipped the
+  Write-Response ACK, even though the write was actually delivered on
+  the link. Our code already catches and ignores the exception, but
+  pygatt logs the traceback *before* raising, so it reached the user's
+  log anyway. Added a logging filter on
+  `pygatt.backends.gatttool.gatttool` that drops those specific ERROR
+  records while leaving every other pygatt message untouched.
+
 ## [0.11.4] - 2026-04-22
 
 ### Changed
