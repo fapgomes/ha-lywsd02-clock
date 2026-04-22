@@ -35,6 +35,14 @@ except Exception:  # noqa: BLE001 — optional runtime dep
     lywsd02 = None  # type: ignore[assignment]
     _LYWSD02_LIB_AVAILABLE = False
 
+from homeassistant.components import bluetooth
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.util import dt as dt_util
+
+from .const import DEFAULT_TIMEOUT, UUID_TIME, UUID_UNIT
+
+_LOGGER = logging.getLogger(__name__)
+
 
 def _patch_pygatt_no_sudo() -> None:
     """Replace pygatt's `GATTToolBackend.reset` so it doesn't require `sudo`.
@@ -70,14 +78,6 @@ def _patch_pygatt_no_sudo() -> None:
 
 
 _patch_pygatt_no_sudo()
-
-from homeassistant.components import bluetooth
-from homeassistant.core import HomeAssistant, callback
-from homeassistant.util import dt as dt_util
-
-from .const import DEFAULT_TIMEOUT, UUID_TIME, UUID_UNIT
-
-_LOGGER = logging.getLogger(__name__)
 
 ADVERTISEMENT_WAIT_SECONDS: float = 30.0
 DIRECT_CLIENT_TIMEOUT_SECONDS: float = 30.0
