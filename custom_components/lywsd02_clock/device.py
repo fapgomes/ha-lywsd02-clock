@@ -28,6 +28,13 @@ except Exception:  # noqa: BLE001 — optional runtime dep
     pygatt = None  # type: ignore[assignment]
     _PYGATT_AVAILABLE = False
 
+try:
+    import lywsd02  # type: ignore[import-untyped]
+    _LYWSD02_LIB_AVAILABLE = True
+except Exception:  # noqa: BLE001 — optional runtime dep
+    lywsd02 = None  # type: ignore[assignment]
+    _LYWSD02_LIB_AVAILABLE = False
+
 from homeassistant.components import bluetooth
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.util import dt as dt_util
@@ -313,9 +320,11 @@ async def _write_via_bluezdbus_direct(
     try:
         try:
             char_time, char_unit = await _resolve_characteristics(client)
-            await client.write_gatt_char(char_time, time_payload, response=True)
-            await client.write_gatt_char(char_unit, unit_payload, response=True)
-            await client.write_gatt_char(char_time, mode_payload, response=True)
+            resp_time = _pick_response_mode(char_time)
+            resp_unit = _pick_response_mode(char_unit)
+            await client.write_gatt_char(char_time, time_payload, response=resp_time)
+            await client.write_gatt_char(char_unit, unit_payload, response=resp_unit)
+            await client.write_gatt_char(char_time, mode_payload, response=resp_time)
         except BleakError as exc:
             raise DeviceCommunicationError(f"bluezdbus write failed: {exc}") from exc
         except DeviceCommunicationError:
@@ -370,6 +379,51 @@ def _pygatt_sync_write(
             adapter.stop()
         except Exception:  # noqa: BLE001
             pass
+
+
+def _lywsd02_lib_sync_write(
+    mac: str,
+    timestamp_utc: int,
+    tz_offset_hours: int,
+    temp_unit: str,
+) -> None:
+    """Run `h4/lywsd02` library's write sequence — synchronous, executed in a thread pool.
+
+    Matches what `ashald/home-assistant-lywsd02` does, via the canonical
+    library. bluepy talks to bluez via its own compiled helper binary, uses
+    Write-Request ACKs for all GATT writes, and is the path the LYWSD02
+    firmware is actually happy with.
+    """
+    import datetime as _dt
+    from lywsd02 import Lywsd02Client  # type: ignore[import-untyped]
+
+    client = Lywsd02Client(mac)
+    client.tz_offset = tz_offset_hours
+    client.units = temp_unit.upper() if temp_unit else None
+    client.time = _dt.datetime.fromtimestamp(timestamp_utc)
+
+
+async def _write_via_lywsd02_lib(
+    mac: str,
+    timestamp_utc: int,
+    tz_offset_hours: int,
+    temp_unit: str,
+) -> None:
+    """Async wrapper for the lywsd02 library write path."""
+    if not _LYWSD02_LIB_AVAILABLE:
+        raise DeviceCommunicationError("lywsd02 library not installed")
+    loop = asyncio.get_running_loop()
+    try:
+        await loop.run_in_executor(
+            None,
+            _lywsd02_lib_sync_write,
+            mac.upper(),
+            timestamp_utc,
+            tz_offset_hours,
+            temp_unit,
+        )
+    except Exception as exc:  # noqa: BLE001 — bluepy raises library-specific errors
+        raise DeviceCommunicationError(f"lywsd02 lib failed: {exc}") from exc
 
 
 async def _bluetoothctl_scan(duration: float = 8.0) -> None:
@@ -479,6 +533,27 @@ async def _write_via_bluetoothctl(
         raise DeviceCommunicationError(
             f"bluetoothctl reported a write error: {output[-300:].strip()}"
         )
+
+
+def _pick_response_mode(char: Any) -> bool:
+    """Pick Write-Request vs Write-Command based on characteristic capability.
+
+    Matches what the high-level `BleakClient` facade does when `response=None`
+    is passed: prefer Write-Request (`response=True`) if the characteristic
+    supports plain `write`; otherwise fall back to Write-Command
+    (`response=False`).
+
+    `h4/lywsd02` (via bluepy `withResponse=True`) consistently uses
+    Write-Request, which suggests the LYWSD02 firmware only persists the
+    time/unit/mode writes when sent with response; plain Write-Commands
+    appear to be silently discarded.
+    """
+    props = getattr(char, "properties", None) or []
+    if "write" in props:
+        return True
+    if "write-without-response" in props:
+        return False
+    return True
 
 
 async def _resolve_characteristics(client: Any) -> tuple[Any, Any]:
@@ -610,9 +685,18 @@ async def _write_via_bluetoothctl_then_dbus(
         else:
             try:
                 char_time, char_unit = await _resolve_characteristics(client)
-                await client.write_gatt_char(char_time, time_payload, response=False)
-                await client.write_gatt_char(char_unit, unit_payload, response=False)
-                await client.write_gatt_char(char_time, mode_payload, response=False)
+                resp_time = _pick_response_mode(char_time)
+                resp_unit = _pick_response_mode(char_unit)
+                _LOGGER.debug(
+                    "char properties: TIME=%s (response=%s), UNIT=%s (response=%s)",
+                    getattr(char_time, "properties", None),
+                    resp_time,
+                    getattr(char_unit, "properties", None),
+                    resp_unit,
+                )
+                await client.write_gatt_char(char_time, time_payload, response=resp_time)
+                await client.write_gatt_char(char_unit, unit_payload, response=resp_unit)
+                await client.write_gatt_char(char_time, mode_payload, response=resp_time)
             except BleakError as exc:
                 write_error = DeviceCommunicationError(f"bleak write after bluetoothctl: {exc}")
             except Exception as exc:  # noqa: BLE001
@@ -756,6 +840,23 @@ async def set_time(
 
     direct_timeout = min(float(timeout), DIRECT_CLIENT_TIMEOUT_SECONDS)
     errors: list[str] = []
+
+    # Path 0 — h4/lywsd02 library. This is the canonical path ashald
+    # uses; bluepy does Write-Request handshakes the LYWSD02 firmware
+    # actually honours (every other bleak/bluetoothctl variant either
+    # fails outright or silently drops the write).
+    if _LYWSD02_LIB_AVAILABLE:
+        try:
+            await _write_via_lywsd02_lib(
+                mac, int(timestamp_utc), int(tz_offset_hours), temp_unit
+            )
+            _LOGGER.debug("Wrote time/unit to %s via lywsd02 library", mac)
+            return
+        except DeviceCommunicationError as exc:
+            errors.append(f"lywsd02 lib: {exc}")
+            _LOGGER.debug("lywsd02 library path failed for %s: %s", mac, exc)
+    else:
+        errors.append("lywsd02 lib: not installed")
 
     # Path 1 — HA Bluetooth stack, only when a connectable BLEDevice is
     # already cached. No waiting, no active-scan triggers: that was what

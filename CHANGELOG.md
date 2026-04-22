@@ -5,6 +5,49 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.0] - 2026-04-22
+
+### Added
+- **Path 0: `h4/lywsd02` Python library.** Same canonical library the
+  `ashald/home-assistant-lywsd02` plugin uses under the hood. It speaks
+  to bluez via `bluepy` (a separate compiled helper), which sends
+  Write-Request handshakes the LYWSD02 firmware actually honours. The
+  user verified this library works end-to-end on their host; every
+  bleak variant we'd tried either refused or silently dropped the
+  write. This is now the first path attempted for every sync; the
+  bleak/bluetoothctl variants remain as fallbacks.
+- New requirement: `lywsd02>=0.0.9` (installs `bluepy` transitively).
+
+### Fixed (bluetoothctl + D-Bus fallback)
+- Writes were ACK'd by `bluez` but the LYWSD02 was discarding them,
+  because v0.10.3 used Write-Command (`response=False`) — fire-and-
+  forget, never actually persists on this firmware. Response mode is
+  now auto-detected per characteristic from the GATT `properties` list,
+  matching what the high-level `BleakClient` facade does when
+  `response=None` is passed.
+- Characteristic properties are logged at `debug`, making future
+  protocol tweaks easier to reason about.
+
+## [0.10.4] - 2026-04-22
+
+### Fixed
+- Writes were ACK'd at the BLE layer but the LYWSD02 firmware was
+  discarding them. v0.10.3 had flipped everything to Write-Command
+  (`response=False`) after v0.10.2 hit an unrelated `Invalid Length`
+  error, and Write-Command is fire-and-forget — `bluez` reports
+  success as soon as the PDU is out the door, regardless of whether the
+  device actually persists it. `h4/lywsd02` uses Write-Request
+  (`withResponse=True`), suggesting the clock firmware only persists
+  time writes when acknowledged.
+
+### Changed
+- Response mode is now auto-detected per characteristic from its
+  `properties` list, matching what the high-level `BleakClient` facade
+  does for `response=None`: Write-Request when `"write"` is present,
+  Write-Command when only `"write-without-response"` is.
+- Characteristic properties are logged at `debug` so future protocol
+  tweaks are easier to reason about.
+
 ## [0.10.3] - 2026-04-22
 
 ### Fixed
