@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.3] - 2026-04-22
+
+### Fixed
+- `[org.bluez.Error.InvalidArguments] Invalid Length` on the write after
+  bluetoothctl connected successfully. The LYWSD02's time characteristic
+  only supports Write-Without-Response, and we were sending
+  `response=True` (Write-with-Response / Request), which bluez rejects
+  with InvalidArguments. Now `response=False` on all three writes,
+  matching what `h4/lywsd02` does via pygatt's default.
+
 ## [0.10.2] - 2026-04-21
 
 ### Fixed

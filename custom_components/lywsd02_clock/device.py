@@ -610,9 +610,9 @@ async def _write_via_bluetoothctl_then_dbus(
         else:
             try:
                 char_time, char_unit = await _resolve_characteristics(client)
-                await client.write_gatt_char(char_time, time_payload, response=True)
-                await client.write_gatt_char(char_unit, unit_payload, response=True)
-                await client.write_gatt_char(char_time, mode_payload, response=True)
+                await client.write_gatt_char(char_time, time_payload, response=False)
+                await client.write_gatt_char(char_unit, unit_payload, response=False)
+                await client.write_gatt_char(char_time, mode_payload, response=False)
             except BleakError as exc:
                 write_error = DeviceCommunicationError(f"bleak write after bluetoothctl: {exc}")
             except Exception as exc:  # noqa: BLE001
