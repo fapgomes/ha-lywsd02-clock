@@ -35,6 +35,42 @@ except Exception:  # noqa: BLE001 — optional runtime dep
     lywsd02 = None  # type: ignore[assignment]
     _LYWSD02_LIB_AVAILABLE = False
 
+
+def _patch_pygatt_no_sudo() -> None:
+    """Replace pygatt's `GATTToolBackend.reset` so it doesn't require `sudo`.
+
+    HAOS's Python container has no `sudo` binary but HA already runs as
+    root (or with the relevant capabilities), so running `hciconfig` directly
+    is enough. This lets `pygatt`'s `reset_on_start=True` — which
+    `h4/lywsd02` relies on via the pygatt default — actually succeed.
+    """
+    if not _PYGATT_AVAILABLE:
+        return
+    try:
+        import subprocess as _subprocess
+
+        def _reset_without_sudo(self):  # type: ignore[no-untyped-def]
+            hci = getattr(self, "_hci_device", "hci0")
+            try:
+                proc = _subprocess.Popen(
+                    ["hciconfig", hci, "reset"],
+                    stdout=_subprocess.DEVNULL,
+                    stderr=_subprocess.DEVNULL,
+                )
+                proc.wait(timeout=10)
+            except FileNotFoundError:
+                _LOGGER.debug("hciconfig binary unavailable; skipping adapter reset")
+            except Exception as exc:  # noqa: BLE001
+                _LOGGER.debug("hciconfig reset best-effort failed: %s", exc)
+
+        pygatt.GATTToolBackend.reset = _reset_without_sudo  # type: ignore[union-attr]
+        _LOGGER.debug("pygatt reset() monkey-patched to drop the sudo prefix")
+    except Exception as exc:  # noqa: BLE001
+        _LOGGER.debug("Could not monkey-patch pygatt reset: %s", exc)
+
+
+_patch_pygatt_no_sudo()
+
 from homeassistant.components import bluetooth
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.util import dt as dt_util
@@ -366,9 +402,27 @@ def _pygatt_sync_write(
             address_type=pygatt.BLEAddressType.public,
         )
         try:
-            device.char_write(UUID_TIME, time_payload, wait_for_response=False)
-            device.char_write(UUID_UNIT, unit_payload, wait_for_response=False)
-            device.char_write(UUID_TIME, mode_payload, wait_for_response=False)
+            # Match h4/lywsd02 protocol semantics: Write-Request
+            # (wait_for_response=True). The LYWSD02 firmware persists the
+            # time/unit/mode writes only when they arrive as Write-Request
+            # PDUs; Write-Command (fire-and-forget) is silently dropped.
+            #
+            # The clock sometimes does not send the Write-Response back in
+            # time, which surfaces as `NotificationTimeout`. The write was
+            # still delivered on the BLE link, so we log and continue.
+            writes = (
+                (UUID_TIME, time_payload, "time"),
+                (UUID_UNIT, unit_payload, "unit"),
+                (UUID_TIME, mode_payload, "mode"),
+            )
+            for char_uuid, payload, label in writes:
+                try:
+                    device.char_write(char_uuid, payload, wait_for_response=True)
+                except pygatt.exceptions.NotificationTimeout:
+                    _LOGGER.debug(
+                        "pygatt %s write: no ACK from device, assuming delivered",
+                        label,
+                    )
         finally:
             try:
                 device.disconnect()
@@ -874,21 +928,11 @@ async def set_time(
         errors.append("HA: no connectable BLEDevice cached for this MAC")
         _LOGGER.debug("HA has no connectable BLEDevice cached for %s; skipping HA path", mac)
 
-    # Path 2 — bluetoothctl (for ACL establishment) + bleak D-Bus GATT writes.
-    # This is the only combination we have shown to work end-to-end on hosts
-    # where HA's Bluetooth integration keeps hci0 busy with managed discovery.
-    try:
-        await _write_via_bluetoothctl_then_dbus(mac, payloads, direct_timeout)
-        _LOGGER.debug("Wrote time/unit/mode to %s via bluetoothctl+D-Bus", mac)
-        return
-    except DeviceCommunicationError as exc:
-        errors.append(f"bluetoothctl+dbus: {exc}")
-        _LOGGER.debug("bluetoothctl+dbus path failed for %s: %s", mac, exc)
-
-    # Path 3 — pygatt / gatttool with `reset_on_start=True`. This matches
-    # what ashald/home-assistant-lywsd02 (via h4/lywsd02 -> pygatt) does:
-    # briefly reset hci0 so HA's scanner releases it, giving gatttool a
-    # clean window to connect and write. Requires sudo, which HAOS lacks.
+    # Path 2 — pygatt / gatttool with Write-Request semantics (same protocol
+    # h4/lywsd02 uses via bluepy). We monkey-patched pygatt above so
+    # `reset_on_start=True` works without `sudo`; the adapter reset is what
+    # gives `gatttool` a clean hci0 even while HA's bluetooth integration
+    # is running.
     try:
         await _write_via_pygatt(mac, payloads, direct_timeout)
         _LOGGER.debug("Wrote time/unit/mode to %s via pygatt", mac)
@@ -896,6 +940,15 @@ async def set_time(
     except DeviceCommunicationError as exc:
         errors.append(f"pygatt: {exc}")
         _LOGGER.debug("pygatt path failed for %s: %s", mac, exc)
+
+    # Path 3 — bluetoothctl (for ACL establishment) + bleak D-Bus GATT writes.
+    try:
+        await _write_via_bluetoothctl_then_dbus(mac, payloads, direct_timeout)
+        _LOGGER.debug("Wrote time/unit/mode to %s via bluetoothctl+D-Bus", mac)
+        return
+    except DeviceCommunicationError as exc:
+        errors.append(f"bluetoothctl+dbus: {exc}")
+        _LOGGER.debug("bluetoothctl+dbus path failed for %s: %s", mac, exc)
 
     # Path 3 — direct BleakClient (goes through habluetooth wrapper).
     try:

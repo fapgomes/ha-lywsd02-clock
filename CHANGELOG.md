@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.1] - 2026-04-22
+
+### Fixed
+- `bluepy`/`lywsd02` failed to install in the HAOS container (no build
+  toolchain). The canonical-library path (path 0 in v0.11.0) would have
+  worked if `bluepy` compiled, but we can't rely on that. Instead we
+  replicate exactly what `h4/lywsd02` does, using `pygatt` (pure Python
+  wrapper around the already-present `gatttool` binary).
+- `pygatt GATTToolBackend.start failed: No such file or directory:
+  'sudo'`. pygatt's `reset_on_start=True` shelled out to
+  `sudo hciconfig hci0 reset`; HAOS has no `sudo` binary but HA already
+  runs with the right privileges. Monkey-patched `GATTToolBackend.reset`
+  to call `hciconfig` directly.
+
+### Changed
+- pygatt path now uses `wait_for_response=True` (Write-Request), matching
+  how `h4/lywsd02` writes via bluepy's `withResponse=True`. The LYWSD02
+  firmware only persists time writes from Write-Request PDUs;
+  Write-Command (fire-and-forget) is silently dropped. If the clock
+  does not send back the Write-Response in time (`NotificationTimeout`),
+  we log and continue — the write was delivered at the BLE layer.
+- Fallback order is now: `lywsd02` lib (if installed) → **pygatt** →
+  bluetoothctl+D-Bus → `BleakClient` → `BleakClientBlueZDBus`.
+
 ## [0.11.0] - 2026-04-22
 
 ### Added
