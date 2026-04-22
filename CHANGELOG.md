@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.2] - 2026-04-22
+
+### Fixed
+- The v0.11.0 manifest added `lywsd02>=0.0.9` as a hard requirement,
+  which pulls in `bluepy` — `bluepy` contains a C helper that needs
+  `gcc` + `make` + `libbluetooth-dev` to build, none of which are
+  present in the HAOS Python container. The failed build prevented the
+  integration from loading at all. Removed `lywsd02` from manifest
+  requirements; the import is still `try:` so the library is used if
+  the host happens to have it installed manually, but the default
+  sync path is now `pygatt` (v0.11.1) which needs no compilation.
+
 ## [0.11.1] - 2026-04-22
 
 ### Fixed
