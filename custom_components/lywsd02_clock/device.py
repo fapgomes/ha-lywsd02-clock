@@ -312,11 +312,14 @@ async def _write_via_bluezdbus_direct(
 
     try:
         try:
-            await client.write_gatt_char(UUID_TIME, time_payload, response=True)
-            await client.write_gatt_char(UUID_UNIT, unit_payload, response=True)
-            await client.write_gatt_char(UUID_TIME, mode_payload, response=True)
+            char_time, char_unit = await _resolve_characteristics(client)
+            await client.write_gatt_char(char_time, time_payload, response=True)
+            await client.write_gatt_char(char_unit, unit_payload, response=True)
+            await client.write_gatt_char(char_time, mode_payload, response=True)
         except BleakError as exc:
             raise DeviceCommunicationError(f"bluezdbus write failed: {exc}") from exc
+        except DeviceCommunicationError:
+            raise
         except Exception as exc:
             raise DeviceCommunicationError(f"bluezdbus write error: {exc}") from exc
     finally:
@@ -478,6 +481,45 @@ async def _write_via_bluetoothctl(
         )
 
 
+async def _resolve_characteristics(client: Any) -> tuple[Any, Any]:
+    """Resolve UUID strings to BleakGATTCharacteristic objects.
+
+    The low-level `BleakClientBlueZDBus` backend requires characteristic
+    *objects* for `write_gatt_char`, unlike the high-level `BleakClient`
+    facade which accepts UUID strings and resolves them internally.
+    """
+    services = getattr(client, "services", None)
+    if services is None and hasattr(client, "get_services"):
+        services = await client.get_services()
+
+    def _find(uuid: str) -> Any:
+        if services is None:
+            return None
+        char = services.get_characteristic(uuid) if hasattr(services, "get_characteristic") else None
+        if char is not None:
+            return char
+        # Fallback: walk service tree looking for the UUID (case-insensitive)
+        try:
+            iterator = services.services.values() if hasattr(services, "services") else iter(services)
+        except TypeError:
+            iterator = iter([])
+        uuid_lc = uuid.lower()
+        for svc in iterator:
+            chars = getattr(svc, "characteristics", None) or []
+            for ch in chars:
+                if str(getattr(ch, "uuid", "")).lower() == uuid_lc:
+                    return ch
+        return None
+
+    char_time = _find(UUID_TIME)
+    char_unit = _find(UUID_UNIT)
+    if char_time is None:
+        raise DeviceCommunicationError(f"characteristic {UUID_TIME} not discovered on device")
+    if char_unit is None:
+        raise DeviceCommunicationError(f"characteristic {UUID_UNIT} not discovered on device")
+    return char_time, char_unit
+
+
 async def _write_via_bluetoothctl_then_dbus(
     mac: str,
     payloads: tuple[bytes, bytes, bytes],
@@ -567,9 +609,10 @@ async def _write_via_bluetoothctl_then_dbus(
             write_error = DeviceCommunicationError(f"bleak connect error: {exc}")
         else:
             try:
-                await client.write_gatt_char(UUID_TIME, time_payload, response=True)
-                await client.write_gatt_char(UUID_UNIT, unit_payload, response=True)
-                await client.write_gatt_char(UUID_TIME, mode_payload, response=True)
+                char_time, char_unit = await _resolve_characteristics(client)
+                await client.write_gatt_char(char_time, time_payload, response=True)
+                await client.write_gatt_char(char_unit, unit_payload, response=True)
+                await client.write_gatt_char(char_time, mode_payload, response=True)
             except BleakError as exc:
                 write_error = DeviceCommunicationError(f"bleak write after bluetoothctl: {exc}")
             except Exception as exc:  # noqa: BLE001
