@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.1] - 2026-05-22
+
+### Removed
+- **Clock mode select entity.** The 7-byte clock-mode write to
+  `UUID_TIME` does not change 12/24 h on the tested LYWSD02 firmware —
+  it only corrupts the e-ink display-refresh timer (30-minute refresh
+  instead of continuous). The ashald extension was reverse-engineered
+  from a different firmware version and is not portable. The select
+  entity was removed to prevent users from accidentally corrupting their
+  display. The `lywsd02_clock.set_time` service still technically
+  accepts `clock_mode` but it is not recommended.
+
 ## [0.13.0] - 2026-04-22
 
 ### Added
