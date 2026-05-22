@@ -933,6 +933,7 @@ async def set_time(
     timestamp_utc: int | None = None,
     tz_offset_hours: int | None = None,
     timeout: float = DEFAULT_TIMEOUT,
+    write_clock_mode: bool = False,
 ) -> None:
     """Write time, temperature unit and clock mode to the device.
 
@@ -950,16 +951,10 @@ async def set_time(
         if tz_offset_hours is None:
             tz_offset_hours = tz_now
 
-    # The clock_mode write (7 bytes to UUID_TIME) is an ashald extension not
-    # present in h4/lywsd02. On some LYWSD02 firmware versions the 6 zero
-    # bytes preceding the mode byte corrupt the display-refresh timer,
-    # causing the e-ink display to only update every 30 minutes. Skip it
-    # during normal sync — the clock retains its 12/24h setting across
-    # power cycles anyway.
     payloads = (
         _build_time_payload(timestamp_utc, tz_offset_hours),
         _build_unit_payload(temp_unit),
-        None,
+        _build_mode_payload(clock_mode) if write_clock_mode else None,
     )
 
     direct_timeout = min(float(timeout), DIRECT_CLIENT_TIMEOUT_SECONDS)

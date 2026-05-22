@@ -74,6 +74,15 @@
     "switch": {
       "auto_sync": {"name": "Auto sync"}
     },
+    "select": {
+      "clock_mode": {
+        "name": "Clock mode",
+        "state": {
+          "24": "24-hour",
+          "12": "12-hour"
+        }
+      }
+    },
     "sensor": {
       "last_sync": {"name": "Last sync"},
       "next_sync": {"name": "Next sync"},

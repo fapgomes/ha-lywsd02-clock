@@ -30,6 +30,7 @@ _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS: list[Platform] = [
     Platform.BUTTON,
+    Platform.SELECT,
     Platform.SENSOR,
     Platform.SWITCH,
 ]
@@ -95,6 +96,7 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
                 timestamp_utc=timestamp_utc,
                 tz_offset_hours=tz_offset_hours,
                 timeout=timeout,
+                write_clock_mode="clock_mode" in call.data,
             )
         except (DeviceNotFoundError, DeviceCommunicationError) as exc:
             raise HomeAssistantError(str(exc)) from exc
