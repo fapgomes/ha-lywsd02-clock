@@ -205,7 +205,8 @@ async def _write_via_retry_connector(
         async with client:
             await client.write_gatt_char(UUID_TIME, time_payload)
             await client.write_gatt_char(UUID_UNIT, unit_payload)
-            await client.write_gatt_char(UUID_TIME, mode_payload)
+            if mode_payload is not None:
+                await client.write_gatt_char(UUID_TIME, mode_payload)
     except Exception as exc:
         raise DeviceCommunicationError(f"HA GATT write failed: {exc}") from exc
 
@@ -222,7 +223,8 @@ async def _write_via_direct_client(
         async with client:
             await client.write_gatt_char(UUID_TIME, time_payload)
             await client.write_gatt_char(UUID_UNIT, unit_payload)
-            await client.write_gatt_char(UUID_TIME, mode_payload)
+            if mode_payload is not None:
+                await client.write_gatt_char(UUID_TIME, mode_payload)
     except BleakError as exc:
         raise DeviceCommunicationError(f"BleakClient failed: {exc}") from exc
     except Exception as exc:
@@ -390,7 +392,8 @@ async def _write_via_bluezdbus_direct(
             resp_unit = _pick_response_mode(char_unit)
             await client.write_gatt_char(char_time, time_payload, response=resp_time)
             await client.write_gatt_char(char_unit, unit_payload, response=resp_unit)
-            await client.write_gatt_char(char_time, mode_payload, response=resp_time)
+            if mode_payload is not None:
+                await client.write_gatt_char(char_time, mode_payload, response=resp_time)
         except BleakError as exc:
             raise DeviceCommunicationError(f"bluezdbus write failed: {exc}") from exc
         except DeviceCommunicationError:
@@ -420,11 +423,12 @@ def _pygatt_sync_write(
     import pygatt  # local import so the executor has the module
 
     time_payload, unit_payload, mode_payload = payloads
-    writes = (
+    writes: list[tuple[str, bytes, str]] = [
         (UUID_TIME, time_payload, "time"),
         (UUID_UNIT, unit_payload, "unit"),
-        (UUID_TIME, mode_payload, "mode"),
-    )
+    ]
+    if mode_payload is not None:
+        writes.append((UUID_TIME, mode_payload, "mode"))
 
     max_attempts = 3
     per_attempt_timeout = max(5.0, float(timeout) / max_attempts)
@@ -588,7 +592,14 @@ async def _write_via_bluetoothctl(
     time_payload, unit_payload, mode_payload = payloads
     hex_time = " ".join(f"0x{b:02X}" for b in time_payload)
     hex_unit = " ".join(f"0x{b:02X}" for b in unit_payload)
-    hex_mode = " ".join(f"0x{b:02X}" for b in mode_payload)
+
+    mode_lines = ""
+    if mode_payload is not None:
+        hex_mode = " ".join(f"0x{b:02X}" for b in mode_payload)
+        mode_lines = (
+            f"select-attribute {UUID_TIME}\n"
+            f'write "{hex_mode}"\n'
+        )
 
     script = (
         f"connect {mac}\n"
@@ -597,8 +608,7 @@ async def _write_via_bluetoothctl(
         f'write "{hex_time}"\n'
         f"select-attribute {UUID_UNIT}\n"
         f'write "{hex_unit}"\n'
-        f"select-attribute {UUID_TIME}\n"
-        f'write "{hex_mode}"\n'
+        f"{mode_lines}"
         "back\n"
         f"disconnect {mac}\n"
         "quit\n"
@@ -803,7 +813,8 @@ async def _write_via_bluetoothctl_then_dbus(
                 )
                 await client.write_gatt_char(char_time, time_payload, response=resp_time)
                 await client.write_gatt_char(char_unit, unit_payload, response=resp_unit)
-                await client.write_gatt_char(char_time, mode_payload, response=resp_time)
+                if mode_payload is not None:
+                    await client.write_gatt_char(char_time, mode_payload, response=resp_time)
             except BleakError as exc:
                 write_error = DeviceCommunicationError(f"bleak write after bluetoothctl: {exc}")
             except Exception as exc:  # noqa: BLE001
@@ -939,10 +950,16 @@ async def set_time(
         if tz_offset_hours is None:
             tz_offset_hours = tz_now
 
+    # The clock_mode write (7 bytes to UUID_TIME) is an ashald extension not
+    # present in h4/lywsd02. On some LYWSD02 firmware versions the 6 zero
+    # bytes preceding the mode byte corrupt the display-refresh timer,
+    # causing the e-ink display to only update every 30 minutes. Skip it
+    # during normal sync — the clock retains its 12/24h setting across
+    # power cycles anyway.
     payloads = (
         _build_time_payload(timestamp_utc, tz_offset_hours),
         _build_unit_payload(temp_unit),
-        _build_mode_payload(clock_mode),
+        None,
     )
 
     direct_timeout = min(float(timeout), DIRECT_CLIENT_TIMEOUT_SECONDS)

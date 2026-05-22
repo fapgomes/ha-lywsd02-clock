@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.0] - 2026-04-22
+
+### Fixed
+- **Clock display only refreshing every 30 minutes.** The clock-mode
+  write (7 bytes to `UUID_TIME`: 6 zero bytes + a mode byte) was being
+  sent on every sync. On some LYWSD02 firmware versions the 6 leading
+  zero bytes corrupt the e-ink display-refresh timer. The `h4/lywsd02`
+  library does not implement clock-mode writes at all, so the bug never
+  surfaced with the old `ashald` plugin.
+
+### Changed
+- Clock-mode write is now **skipped during normal sync**. The LYWSD02
+  retains its 12/24 h setting across power cycles, so re-writing it
+  every sync was unnecessary and harmful.
+- The `lywsd02_clock.set_time` service still accepts `clock_mode: 12`
+  or `clock_mode: 24` — when provided, the mode write IS included (for
+  one-shot changes). Only the automatic sync no longer sends it.
+
 ## [0.11.5] - 2026-04-22
 
 ### Fixed
