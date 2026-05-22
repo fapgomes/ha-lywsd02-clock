@@ -5,7 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.12.0] - 2026-04-22
+## [0.13.0] - 2026-04-22
+
+### Added
+- **Clock mode select entity** — visible 12-hour / 24-hour dropdown on
+  the device page. Changing it writes the mode to the clock via a
+  one-shot BLE write and persists the choice in config-entry options.
 
 ### Fixed
 - **Clock display only refreshing every 30 minutes.** The clock-mode
@@ -16,12 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   surfaced with the old `ashald` plugin.
 
 ### Changed
-- Clock-mode write is now **skipped during normal sync**. The LYWSD02
-  retains its 12/24 h setting across power cycles, so re-writing it
-  every sync was unnecessary and harmful.
-- The `lywsd02_clock.set_time` service still accepts `clock_mode: 12`
-  or `clock_mode: 24` — when provided, the mode write IS included (for
-  one-shot changes). Only the automatic sync no longer sends it.
+- Clock-mode write is now **skipped during normal sync** (time + unit
+  only). The LYWSD02 retains its 12/24 h setting across power cycles.
+  Only the new select entity and explicit `lywsd02_clock.set_time`
+  service calls with `clock_mode` trigger the mode write.
 
 ## [0.11.5] - 2026-04-22
 
