@@ -14,6 +14,7 @@ Unlike service-only plugins, this is a full integration with UI setup, per-devic
 - **Per-device entities**:
   - `button.<name>_sync_now` — run a manual sync now.
   - `switch.<name>_auto_sync` — enable/disable the schedule for this device.
+  - `select.<name>_sync_frequency` — choose how often the scheduled sync runs (daily / weekly / monthly / DST-only).
   - `sensor.<name>_last_sync` — timestamp of the last successful sync.
   - `sensor.<name>_next_sync` — when the next scheduled sync will fire.
   - `sensor.<name>_last_sync_status` — `success`, `failed` or `never`, with the error message as an attribute.
@@ -61,6 +62,7 @@ If the device doesn't show up automatically:
 |---|---|
 | `button.<name>_sync_now` | Press to sync immediately, regardless of schedule or auto-sync state. |
 | `switch.<name>_auto_sync` | On = the schedule runs. Off = no automatic sync, no DST sync. Manual button / service still work. |
+| `select.<name>_sync_frequency` | How often the scheduled sync runs: `daily` / `weekly` (Sundays) / `monthly` (1st) / `dst_only`. Mirrors the frequency in the config flow. |
 | `sensor.<name>_last_sync` | Timestamp (`device_class: timestamp`) of the last successful sync. `unknown` until the first success. |
 | `sensor.<name>_next_sync` | When the next scheduled sync will fire. `unknown` when auto-sync is off. |
 | `sensor.<name>_last_sync_status` | `success` / `failed` / `never`. Attributes: `error_message`, `attempted_at`. |

@@ -57,11 +57,13 @@
       }
     },
     "select": {
-      "clock_mode": {
-        "name": "Clock mode",
+      "frequency": {
+        "name": "Sync frequency",
         "state": {
-          "24": "24-hour",
-          "12": "12-hour"
+          "daily": "Daily",
+          "weekly": "Weekly (Sundays)",
+          "monthly": "Monthly (1st)",
+          "dst_only": "DST transitions only (no scheduled sync)"
         }
       }
     },
