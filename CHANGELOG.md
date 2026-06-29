@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.0] - 2026-06-29
+
+### Added
+- **Sync frequency select entity** (`select.<name>_sync_frequency`). The
+  sync frequency, previously only reachable through the config/options
+  flow, is now a Select control on the device page alongside Auto sync
+  and Sync now. Options: `daily` / `weekly` (Sundays) / `monthly` (1st)
+  / `dst_only`. Selecting a value writes to the entry options and reloads
+  the entry — no Bluetooth write is involved (it is purely scheduling),
+  so it carries none of the display-corruption risk that retired the
+  clock-mode select in 0.13.1.
+
 ## [0.13.1] - 2026-05-22
 
 ### Removed
