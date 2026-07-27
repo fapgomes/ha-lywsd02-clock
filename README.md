@@ -1,5 +1,7 @@
 # LYWSD02 Clock — Home Assistant integration
 
+<img src="custom_components/lywsd02_clock/brand/logo.png" alt="LYWSD02 Clock" width="434">
+
 Keep one or more Xiaomi **LYWSD02** e-Ink clocks in sync with Home Assistant's local time over Bluetooth — directly or through an [ESPHome Bluetooth proxy](https://esphome.io/components/bluetooth_proxy.html).
 
 Unlike service-only plugins, this is a full integration with UI setup, per-device entities, automatic scheduled sync, and automatic daylight-saving-time handling.
