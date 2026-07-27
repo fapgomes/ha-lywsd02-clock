@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.1] - 2026-07-27
+
+### Added
+- Brand icon and logo (neutral e-ink clock mark) shipped in
+  `custom_components/lywsd02_clock/brand/`, served locally by Home
+  Assistant 2026.3.0+ (older versions ignore the folder). Includes
+  dark-theme logo variants; the generator lives in `brand_assets/`.
+- Hassfest + HACS validation workflow.
+
+### Removed
+- Xiaomi Mi squircle placeholder icons from `brand_assets/` (third-party
+  trademark, never shipped).
+
 ## [0.14.0] - 2026-06-29
 
 ### Added
