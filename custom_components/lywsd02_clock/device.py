@@ -121,6 +121,27 @@ class DeviceCommunicationError(Exception):
     """Raised on any BLE connection or GATT write failure."""
 
 
+def _create_bluez_backend_client(
+    target: BLEDevice | str, timeout: float
+) -> Any:
+    """Create the private BlueZ backend across supported Bleak versions."""
+    if _BluezBackendClient is None:
+        raise DeviceCommunicationError(
+            "bluez D-Bus backend unavailable (non-Linux host or missing dependency)"
+        )
+
+    kwargs: dict[str, Any] = {"timeout": timeout}
+    try:
+        if "bluez" in inspect.signature(_BluezBackendClient).parameters:
+            kwargs["bluez"] = {}
+    except (TypeError, ValueError):
+        # Bleak 3.x requires this keyword-only argument. Supplying an empty
+        # mapping selects the default adapter and mirrors public BleakClient.
+        kwargs["bluez"] = {}
+
+    return _BluezBackendClient(target, **kwargs)
+
+
 def _build_time_payload(timestamp_utc: int, tz_offset_hours: int) -> bytes:
     return struct.pack("<Ib", timestamp_utc, tz_offset_hours)
 
@@ -353,7 +374,7 @@ async def _write_via_bluezdbus_direct(
         client_target = mac.upper()
 
     time_payload, unit_payload, mode_payload = payloads
-    client = _BluezBackendClient(client_target, timeout=timeout)
+    client = _create_bluez_backend_client(client_target, timeout)
 
     connect_kwargs: dict[str, Any] = {}
     try:
@@ -776,7 +797,7 @@ async def _write_via_bluetoothctl_then_dbus(
         # bluez stores addresses uppercase in its D-Bus ObjectManager, and
         # bleak's lookup is case-sensitive — pass uppercase so
         # find_device_by_address actually matches.
-        client = _BluezBackendClient(mac.upper(), timeout=timeout)
+        client = _create_bluez_backend_client(mac.upper(), timeout)
         connect_kwargs: dict[str, Any] = {}
         try:
             sig = inspect.signature(client.connect)
