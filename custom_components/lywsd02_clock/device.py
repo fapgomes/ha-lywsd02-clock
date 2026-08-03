@@ -166,6 +166,19 @@ async def set_time(
     Raises DeviceNotFoundError if no connectable advertisement is seen within
     `timeout`, DeviceCommunicationError on connection or GATT write failure.
     """
+    ble_device = await _resolve_ble_device(hass, mac, timeout)
+    if ble_device is None:
+        raise DeviceNotFoundError(
+            f"No advertisement from {mac} within {timeout:.0f}s. Press any "
+            "button on the clock to wake it, and make sure it is in range of "
+            "the Home Assistant host's Bluetooth adapter or an ESPHome "
+            "Bluetooth proxy."
+        )
+
+    # Capture the timestamp only now, immediately before the write — not
+    # before the advertisement wait above, which can block up to `timeout`
+    # (plus establish_connection's own retries) and would otherwise leave
+    # the clock set that many seconds slow.
     if timestamp_utc is None or tz_offset_hours is None:
         ts_now, tz_now = _current_time_and_offset()
         if timestamp_utc is None:
@@ -179,13 +192,5 @@ async def set_time(
         _build_mode_payload(clock_mode) if write_clock_mode else None,
     )
 
-    ble_device = await _resolve_ble_device(hass, mac, timeout)
-    if ble_device is None:
-        raise DeviceNotFoundError(
-            f"No advertisement from {mac} within {timeout:.0f}s. Press any "
-            "button on the clock to wake it, and make sure it is in range of "
-            "the Home Assistant host's Bluetooth adapter or an ESPHome "
-            "Bluetooth proxy."
-        )
     await _write_payloads(ble_device, mac, payloads)
     _LOGGER.debug("Wrote time/unit/mode to %s via HA Bluetooth", mac)
