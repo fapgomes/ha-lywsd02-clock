@@ -261,6 +261,7 @@ async def test_lost_ack_confirmed_by_read_back(hass):
     v1.read_gatt_char.side_effect = [
         struct.pack("<Ib", 1700000005, 0),  # within VERIFY_TOLERANCE_SECONDS
         b"\xff",
+        b"\x5a",  # 90 % — piggybacked battery read
     ]
     with patch(
         f"{DEVICE_NS}.WRITE_RETRY_DELAY_SECONDS", 0
@@ -270,9 +271,10 @@ async def test_lost_ack_confirmed_by_read_back(hass):
         f"{DEVICE_NS}.establish_connection",
         new=AsyncMock(side_effect=[w1, v1]),
     ) as mock_establish:
-        await set_time(
+        result = await set_time(
             hass, MAC, timestamp_utc=1700000000, tz_offset_hours=0, temp_unit="C"
         )
+    assert result == 90
     assert mock_establish.await_count == 2
     w1.disconnect.assert_awaited_once()
     v1.disconnect.assert_awaited_once()
@@ -304,3 +306,47 @@ async def test_read_back_mismatch_keeps_retrying(hass):
         with pytest.raises(DeviceCommunicationError):
             await set_time(hass, MAC, timestamp_utc=1700000000, tz_offset_hours=0)
     assert mock_establish.await_count == 6  # 3 writes + 3 verifies
+
+
+async def test_battery_returned_on_success(hass):
+    client = AsyncMock()
+    client.read_gatt_char.return_value = b"\x5a"  # 90 %
+    with patch(
+        f"{DEVICE_NS}._resolve_ble_device", new=AsyncMock(return_value=MagicMock())
+    ), patch(
+        f"{DEVICE_NS}.establish_connection", new=AsyncMock(return_value=client)
+    ):
+        result = await set_time(
+            hass, MAC, timestamp_utc=1700000000, tz_offset_hours=0
+        )
+    assert result == 90
+    client.read_gatt_char.assert_awaited_once()
+
+
+async def test_battery_read_failure_does_not_fail_sync(hass):
+    client = AsyncMock()
+    client.read_gatt_char.side_effect = RuntimeError("battery read boom")
+    with patch(
+        f"{DEVICE_NS}._resolve_ble_device", new=AsyncMock(return_value=MagicMock())
+    ), patch(
+        f"{DEVICE_NS}.establish_connection", new=AsyncMock(return_value=client)
+    ):
+        result = await set_time(
+            hass, MAC, timestamp_utc=1700000000, tz_offset_hours=0
+        )
+    assert result is None  # sync succeeded, battery unknown
+    assert client.write_gatt_char.await_count == 2  # writes unaffected
+
+
+async def test_battery_out_of_range_returns_none(hass):
+    client = AsyncMock()
+    client.read_gatt_char.return_value = b"\xff"  # 255 — invalid percent
+    with patch(
+        f"{DEVICE_NS}._resolve_ble_device", new=AsyncMock(return_value=MagicMock())
+    ), patch(
+        f"{DEVICE_NS}.establish_connection", new=AsyncMock(return_value=client)
+    ):
+        result = await set_time(
+            hass, MAC, timestamp_utc=1700000000, tz_offset_hours=0
+        )
+    assert result is None

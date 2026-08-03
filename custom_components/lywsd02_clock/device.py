@@ -16,7 +16,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import struct
-from typing import Final, Literal
+from typing import Any, Final, Literal
 
 from bleak.backends.device import BLEDevice
 from bleak_retry_connector import BleakClientWithServiceCache, establish_connection
@@ -25,7 +25,7 @@ from homeassistant.components import bluetooth
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.util import dt as dt_util
 
-from .const import DEFAULT_TIMEOUT, UUID_TIME, UUID_UNIT
+from .const import DEFAULT_TIMEOUT, UUID_BATTERY, UUID_TIME, UUID_UNIT
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -74,6 +74,15 @@ def _build_unit_payload(temp_unit: str) -> bytes:
 def _build_mode_payload(clock_mode: int) -> bytes:
     value = 0xAA if int(clock_mode) == 12 else 0x00
     return struct.pack("<IHB", 0, 0, value)
+
+
+def _parse_battery(value: Any) -> int | None:
+    """Parse the battery characteristic value (1 byte, percent)."""
+    try:
+        level = int(value[0])
+    except Exception:  # noqa: BLE001 — malformed/absent value is a soft failure
+        return None
+    return level if 0 <= level <= 100 else None
 
 
 def _current_time_and_offset() -> tuple[int, int]:
@@ -140,7 +149,7 @@ async def _write_payloads(
     ble_device: BLEDevice,
     mac: str,
     payloads: tuple[bytes, bytes, bytes | None],
-) -> None:
+) -> int | None:
     """Connect once and write the payloads with Write-Request semantics.
 
     The client returned by establish_connection is ALREADY connected — do not
@@ -148,6 +157,9 @@ async def _write_payloads(
     characteristics advertise `write` only (no write-without-response), and
     the LYWSD02 firmware ignores unacknowledged writes, so response=True is
     explicit.
+
+    On success, also reads the battery level (percent) on the same
+    connection, best-effort — a failed battery read never fails the sync.
     """
     time_payload, unit_payload, mode_payload = payloads
     try:
@@ -164,6 +176,15 @@ async def _write_payloads(
             await client.write_gatt_char(UUID_TIME, mode_payload, response=True)
     except Exception as exc:
         raise DeviceCommunicationError(f"GATT write failed: {exc}") from exc
+    else:
+        # Battery is read best-effort on the connection we already have; a
+        # failure here must never fail the sync that just succeeded.
+        battery: int | None = None
+        try:
+            battery = _parse_battery(await client.read_gatt_char(UUID_BATTERY))
+        except Exception as exc:  # noqa: BLE001 — best-effort read
+            _LOGGER.debug("Battery read failed for %s: %s", mac, exc)
+        return battery
     finally:
         try:
             await client.disconnect()
@@ -177,7 +198,7 @@ async def _read_back_matches(
     expected_timestamp: int,
     expected_tz: int,
     expected_unit: bytes,
-) -> bool:
+) -> tuple[bool, int | None]:
     """Read back the time/unit characteristics to confirm a write landed even
     though its Write-Response was lost.
 
@@ -187,7 +208,8 @@ async def _read_back_matches(
     sleep-and-retry proceeds. The optional clock-mode payload shares the
     TIME characteristic with the time payload and cannot be distinguished
     from it on read-back, so it is assumed delivered alongside the time
-    write whenever the time read-back matches.
+    write whenever the time read-back matches. When the read-back confirms a
+    match, also piggybacks a best-effort battery read on the same connection.
     """
     try:
         client = await establish_connection(
@@ -195,22 +217,31 @@ async def _read_back_matches(
         )
     except Exception as exc:
         _LOGGER.debug("Read-back connection failed for %s: %s", mac, exc)
-        return False
+        return False, None
 
     try:
         time_value = await client.read_gatt_char(UUID_TIME)
         unit_value = await client.read_gatt_char(UUID_UNIT)
         if len(time_value) < 5:
-            return False
+            return False, None
         ts, tz = struct.unpack("<Ib", time_value[:5])
-        return (
+        matched = (
             abs(ts - expected_timestamp) <= VERIFY_TOLERANCE_SECONDS
             and tz == expected_tz
             and unit_value[:1] == expected_unit
         )
+        battery: int | None = None
+        if matched:
+            try:
+                battery = _parse_battery(
+                    await client.read_gatt_char(UUID_BATTERY)
+                )
+            except Exception as exc:  # noqa: BLE001 — best-effort read
+                _LOGGER.debug("Battery read failed for %s: %s", mac, exc)
+        return matched, battery
     except Exception as exc:
         _LOGGER.debug("Read-back failed for %s: %s", mac, exc)
-        return False
+        return False, None
     finally:
         try:
             await client.disconnect()
@@ -228,7 +259,7 @@ async def set_time(
     tz_offset_hours: int | None = None,
     timeout: float = DEFAULT_TIMEOUT,
     write_clock_mode: bool = False,
-) -> None:
+) -> int | None:
     """Write time, temperature unit and (optionally) clock mode to the device.
 
     Uses Home Assistant's Bluetooth stack exclusively: works with the host's
@@ -237,6 +268,8 @@ async def set_time(
     The device intermittently drops the BLE link right after connect, so the
     write is retried up to WRITE_ATTEMPTS times, each on a FRESH connection
     (a new `establish_connection` call) — a single dead link is never reused.
+
+    Returns the battery level (percent) when it could be read, else None.
 
     Raises DeviceNotFoundError if no connectable advertisement is seen within
     `timeout`, DeviceCommunicationError if every write attempt fails.
@@ -273,9 +306,9 @@ async def set_time(
         )
 
         try:
-            await _write_payloads(ble_device, mac, payloads)
+            battery = await _write_payloads(ble_device, mac, payloads)
             _LOGGER.debug("Wrote time/unit/mode to %s via HA Bluetooth", mac)
-            return
+            return battery
         except DeviceCommunicationError as exc:
             last_exc = exc
             _LOGGER.debug(
@@ -296,18 +329,19 @@ async def set_time(
             # only waste a connection attempt and delay the retry.
             if not isinstance(exc, DeviceConnectionError):
                 unit_payload = payloads[1]
-                if await _read_back_matches(
+                matched, battery = await _read_back_matches(
                     ble_device,
                     mac,
                     attempt_timestamp_utc,
                     attempt_tz_offset_hours,
                     unit_payload,
-                ):
+                )
+                if matched:
                     _LOGGER.info(
                         "write response lost but read-back confirms the "
                         "device applied it"
                     )
-                    return
+                    return battery
             if attempt < WRITE_ATTEMPTS:
                 await asyncio.sleep(WRITE_RETRY_DELAY_SECONDS)
 
