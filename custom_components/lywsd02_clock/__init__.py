@@ -25,7 +25,7 @@ from .const import (
 )
 from .coordinator import LYWSD02Coordinator
 from .device import DeviceCommunicationError, DeviceNotFoundError, set_time
-from .mac import normalize_mac
+from .mac import is_valid_mac, normalize_mac
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -36,9 +36,18 @@ PLATFORMS: list[Platform] = [
     Platform.SWITCH,
 ]
 
+
+def _validated_mac(value: str) -> str:
+    """Validate and normalize a MAC address for the service schema."""
+    mac = normalize_mac(cv.string(value))
+    if not is_valid_mac(mac):
+        raise vol.Invalid(f"invalid MAC address: {value!r}")
+    return mac
+
+
 SET_TIME_SCHEMA = vol.Schema(
     {
-        vol.Required("mac"): cv.string,
+        vol.Required("mac"): _validated_mac,
         vol.Optional("timestamp"): vol.Coerce(int),
         vol.Optional("tz_offset"): vol.Coerce(int),
         vol.Optional("temp_mode"): vol.In(TEMP_UNITS),
@@ -53,7 +62,7 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     hass.data.setdefault(DOMAIN, {})
 
     async def _handle_set_time(call: ServiceCall) -> None:
-        mac = normalize_mac(call.data["mac"])
+        mac = call.data["mac"]
         coordinator: LYWSD02Coordinator | None = None
         for coord in hass.data.get(DOMAIN, {}).values():
             if isinstance(coord, LYWSD02Coordinator) and coord.mac == mac:
