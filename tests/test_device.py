@@ -8,6 +8,7 @@ Defect 3: `async with` on the already-connected client from
           establish_connection triggered a second connect().
 """
 import asyncio
+import struct
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -122,13 +123,82 @@ async def test_write_clock_mode_adds_third_write(hass):
 
 
 async def test_write_failure_raises_and_still_disconnects(hass):
+    """A persistently failing device is retried WRITE_ATTEMPTS times, and
+    every fresh connection (even a doomed one) is disconnected — no link is
+    ever left dangling."""
     client = AsyncMock()
     client.write_gatt_char.side_effect = RuntimeError("boom")
     with patch(
+        f"{DEVICE_NS}.WRITE_RETRY_DELAY_SECONDS", 0
+    ), patch(
         f"{DEVICE_NS}._resolve_ble_device", new=AsyncMock(return_value=MagicMock())
     ), patch(
         f"{DEVICE_NS}.establish_connection", new=AsyncMock(return_value=client)
-    ):
+    ) as mock_establish:
         with pytest.raises(DeviceCommunicationError):
             await set_time(hass, MAC, timestamp_utc=1700000000, tz_offset_hours=0)
-    client.disconnect.assert_awaited_once()
+    assert mock_establish.await_count == 3
+    assert client.disconnect.await_count == 3
+
+
+async def test_write_retries_with_fresh_connection(hass):
+    """A dropped link on the first attempt must not be reused — the retry
+    gets its own establish_connection call, and both clients are cleanly
+    disconnected."""
+    client1 = AsyncMock()
+    client1.write_gatt_char.side_effect = RuntimeError("boom")
+    client2 = AsyncMock()
+    with patch(
+        f"{DEVICE_NS}.WRITE_RETRY_DELAY_SECONDS", 0
+    ), patch(
+        f"{DEVICE_NS}._resolve_ble_device", new=AsyncMock(return_value=MagicMock())
+    ), patch(
+        f"{DEVICE_NS}.establish_connection",
+        new=AsyncMock(side_effect=[client1, client2]),
+    ) as mock_establish:
+        await set_time(hass, MAC, timestamp_utc=1700000000, tz_offset_hours=0)
+    assert mock_establish.await_count == 2
+    client1.disconnect.assert_awaited_once()
+    client2.disconnect.assert_awaited_once()
+
+
+async def test_write_fails_after_all_attempts(hass):
+    """All WRITE_ATTEMPTS connections fail: DeviceCommunicationError is
+    raised, chained from the last error, after exactly WRITE_ATTEMPTS
+    establish_connection calls."""
+    clients = [AsyncMock() for _ in range(3)]
+    for c in clients:
+        c.write_gatt_char.side_effect = RuntimeError("boom")
+    with patch(
+        f"{DEVICE_NS}.WRITE_RETRY_DELAY_SECONDS", 0
+    ), patch(
+        f"{DEVICE_NS}._resolve_ble_device", new=AsyncMock(return_value=MagicMock())
+    ), patch(
+        f"{DEVICE_NS}.establish_connection", new=AsyncMock(side_effect=clients)
+    ) as mock_establish:
+        with pytest.raises(DeviceCommunicationError):
+            await set_time(hass, MAC, timestamp_utc=1700000000, tz_offset_hours=0)
+    assert mock_establish.await_count == 3
+
+
+async def test_retry_recomputes_default_timestamp(hass):
+    """When the caller does not pass an explicit timestamp, each retry must
+    recompute it fresh — a slow first attempt must not write a stale time on
+    the successful retry."""
+    client1 = AsyncMock()
+    client1.write_gatt_char.side_effect = RuntimeError("boom")
+    client2 = AsyncMock()
+    with patch(
+        f"{DEVICE_NS}.WRITE_RETRY_DELAY_SECONDS", 0
+    ), patch(
+        f"{DEVICE_NS}._resolve_ble_device", new=AsyncMock(return_value=MagicMock())
+    ), patch(
+        f"{DEVICE_NS}.establish_connection",
+        new=AsyncMock(side_effect=[client1, client2]),
+    ), patch(
+        f"{DEVICE_NS}._current_time_and_offset",
+        side_effect=[(1000, 0), (2000, 0)],
+    ):
+        await set_time(hass, MAC)
+    first_write = client2.write_gatt_char.await_args_list[0]
+    assert first_write.args[1] == struct.pack("<Ib", 2000, 0)

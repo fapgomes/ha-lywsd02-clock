@@ -16,7 +16,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import struct
-from typing import Literal
+from typing import Final, Literal
 
 from bleak.backends.device import BLEDevice
 from bleak_retry_connector import BleakClientWithServiceCache, establish_connection
@@ -28,6 +28,14 @@ from homeassistant.util import dt as dt_util
 from .const import DEFAULT_TIMEOUT, UUID_TIME, UUID_UNIT
 
 _LOGGER = logging.getLogger(__name__)
+
+# The LYWSD02 intermittently drops the BLE link right after connect (BlueZ
+# surfaces this mid-write as UNLIKELY_ERROR 0x0E, or as a "Service Discovery
+# has not been performed yet" BleakError on the next write to the now-dead
+# connection). Retrying on a FRESH connection — the same tactic the legacy
+# pygatt path relied on — reliably works around it.
+WRITE_ATTEMPTS: Final = 3
+WRITE_RETRY_DELAY_SECONDS: float = 2.0
 
 
 class DeviceNotFoundError(Exception):
@@ -163,8 +171,12 @@ async def set_time(
     Uses Home Assistant's Bluetooth stack exclusively: works with the host's
     own adapter and with ESPHome BLE proxies.
 
+    The device intermittently drops the BLE link right after connect, so the
+    write is retried up to WRITE_ATTEMPTS times, each on a FRESH connection
+    (a new `establish_connection` call) — a single dead link is never reused.
+
     Raises DeviceNotFoundError if no connectable advertisement is seen within
-    `timeout`, DeviceCommunicationError on connection or GATT write failure.
+    `timeout`, DeviceCommunicationError if every write attempt fails.
     """
     ble_device = await _resolve_ble_device(hass, mac, timeout)
     if ble_device is None:
@@ -175,22 +187,44 @@ async def set_time(
             "Bluetooth proxy."
         )
 
-    # Capture the timestamp only now, immediately before the write — not
-    # before the advertisement wait above, which can block up to `timeout`
-    # (plus establish_connection's own retries) and would otherwise leave
-    # the clock set that many seconds slow.
-    if timestamp_utc is None or tz_offset_hours is None:
-        ts_now, tz_now = _current_time_and_offset()
-        if timestamp_utc is None:
-            timestamp_utc = ts_now
-        if tz_offset_hours is None:
-            tz_offset_hours = tz_now
+    last_exc: Exception | None = None
+    for attempt in range(1, WRITE_ATTEMPTS + 1):
+        # Capture the timestamp fresh on every attempt, immediately before
+        # the write — not before the advertisement wait above, which can
+        # block up to `timeout` and would otherwise leave the clock set that
+        # many seconds slow. Explicit caller-provided values stay fixed
+        # across attempts.
+        attempt_timestamp_utc = timestamp_utc
+        attempt_tz_offset_hours = tz_offset_hours
+        if attempt_timestamp_utc is None or attempt_tz_offset_hours is None:
+            ts_now, tz_now = _current_time_and_offset()
+            if attempt_timestamp_utc is None:
+                attempt_timestamp_utc = ts_now
+            if attempt_tz_offset_hours is None:
+                attempt_tz_offset_hours = tz_now
 
-    payloads = (
-        _build_time_payload(timestamp_utc, tz_offset_hours),
-        _build_unit_payload(temp_unit),
-        _build_mode_payload(clock_mode) if write_clock_mode else None,
-    )
+        payloads = (
+            _build_time_payload(attempt_timestamp_utc, attempt_tz_offset_hours),
+            _build_unit_payload(temp_unit),
+            _build_mode_payload(clock_mode) if write_clock_mode else None,
+        )
 
-    await _write_payloads(ble_device, mac, payloads)
-    _LOGGER.debug("Wrote time/unit/mode to %s via HA Bluetooth", mac)
+        try:
+            await _write_payloads(ble_device, mac, payloads)
+            _LOGGER.debug("Wrote time/unit/mode to %s via HA Bluetooth", mac)
+            return
+        except DeviceCommunicationError as exc:
+            last_exc = exc
+            _LOGGER.debug(
+                "GATT write attempt %d/%d failed for %s: %s",
+                attempt,
+                WRITE_ATTEMPTS,
+                mac,
+                exc,
+            )
+            if attempt < WRITE_ATTEMPTS:
+                await asyncio.sleep(WRITE_RETRY_DELAY_SECONDS)
+
+    raise DeviceCommunicationError(
+        f"GATT write failed after {WRITE_ATTEMPTS} attempts"
+    ) from last_exc
