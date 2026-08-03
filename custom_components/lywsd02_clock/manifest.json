@@ -12,6 +12,6 @@
   "iot_class": "local_polling",
   "issue_tracker": "https://github.com/fapgomes/ha-lywsd02-clock/issues",
   "loggers": ["custom_components.lywsd02_clock"],
-  "requirements": ["bleak-retry-connector>=3.0", "pygatt>=4.0.5"],
+  "requirements": ["bleak-retry-connector>=3.0"],
   "version": "0.14.2"
 }
