@@ -97,7 +97,7 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
         timeout = call.data.get("timeout", DEFAULT_TIMEOUT)
 
         try:
-            await set_time(
+            battery = await set_time(
                 hass,
                 mac,
                 temp_unit=temp_unit,
@@ -116,6 +116,8 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
             coordinator.last_status = "success"
             coordinator.last_error = None
             coordinator.last_utcoffset = dt_util.now().utcoffset()
+            if battery is not None:
+                coordinator.battery_level = battery
             coordinator.async_update_listeners()
 
     if not hass.services.has_service(DOMAIN, SERVICE_SET_TIME):

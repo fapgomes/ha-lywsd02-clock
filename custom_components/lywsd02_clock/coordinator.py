@@ -71,6 +71,7 @@ class LYWSD02Coordinator(DataUpdateCoordinator[None]):
         self.last_status: str = STATUS_NEVER
         self.last_error: str | None = None
         self.last_utcoffset: Any = None
+        self.battery_level: int | None = None
         self._unsub: list[CALLBACK_TYPE] = []
         self._sync_in_progress: bool = False
 
@@ -163,7 +164,7 @@ class LYWSD02Coordinator(DataUpdateCoordinator[None]):
         try:
             self.last_attempt = dt_util.utcnow()
             try:
-                await set_time(
+                battery = await set_time(
                     self.hass,
                     self.mac,
                     temp_unit=self.temp_unit,
@@ -187,6 +188,8 @@ class LYWSD02Coordinator(DataUpdateCoordinator[None]):
             self.last_status = STATUS_SUCCESS
             self.last_error = None
             self.last_utcoffset = dt_util.now().utcoffset()
+            if battery is not None:
+                self.battery_level = battery
             self.async_update_listeners()
             return True
         finally:

@@ -7,8 +7,10 @@ from typing import Any
 from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntity,
+    SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import PERCENTAGE, EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
@@ -28,6 +30,7 @@ async def async_setup_entry(
             LastSyncSensor(coordinator),
             NextSyncSensor(coordinator),
             LastSyncStatusSensor(coordinator),
+            BatterySensor(coordinator),
         ]
     )
 
@@ -74,3 +77,18 @@ class LastSyncStatusSensor(LYWSD02Entity, SensorEntity):
             "error_message": self.coordinator.last_error,
             "attempted_at": self.coordinator.last_attempt,
         }
+
+
+class BatterySensor(LYWSD02Entity, SensorEntity):
+    _attr_translation_key = "battery"
+    _attr_device_class = SensorDeviceClass.BATTERY
+    _attr_native_unit_of_measurement = PERCENTAGE
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: LYWSD02Coordinator) -> None:
+        super().__init__(coordinator, "battery")
+
+    @property
+    def native_value(self) -> int | None:
+        return self.coordinator.battery_level

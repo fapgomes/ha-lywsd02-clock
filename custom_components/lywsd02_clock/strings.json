@@ -64,6 +64,7 @@
       }
     },
     "sensor": {
+      "battery": {"name": "Battery"},
       "last_sync": {"name": "Last sync"},
       "next_sync": {"name": "Next sync"},
       "last_sync_status": {

@@ -20,6 +20,7 @@ Unlike service-only plugins, this is a full integration with UI setup, per-devic
   - `sensor.<name>_last_sync` — timestamp of the last successful sync.
   - `sensor.<name>_next_sync` — when the next scheduled sync will fire.
   - `sensor.<name>_last_sync_status` — `success`, `failed` or `never`, with the error message as an attribute.
+  - `sensor.<name>_battery` — battery percentage (diagnostic), updated at each successful sync; requires an active connection, which is why `xiaomi_ble` cannot provide it passively.
 - **Backwards-compat service** — `lywsd02_clock.set_time` for advanced / scripted flows.
 
 ## Requirements
@@ -68,6 +69,7 @@ If the device doesn't show up automatically:
 | `sensor.<name>_last_sync` | Timestamp (`device_class: timestamp`) of the last successful sync. `unknown` until the first success. |
 | `sensor.<name>_next_sync` | When the next scheduled sync will fire. `unknown` when auto-sync is off. |
 | `sensor.<name>_last_sync_status` | `success` / `failed` / `never`. Attributes: `error_message`, `attempted_at`. |
+| `sensor.<name>_battery` | Battery percentage (diagnostic). Updated at each successful sync; requires a connection, which is why `xiaomi_ble` cannot provide it passively. |
 
 All entities are grouped under a single HA device (manufacturer Xiaomi, model LYWSD02, identifier = MAC).
 
