@@ -125,7 +125,7 @@ logger:
     custom_components.lywsd02_clock: debug
 ```
 
-### "No BLE device with MAC … known to the Bluetooth stack"
+### "No advertisement from &lt;mac&gt; within &lt;timeout&gt;s..."
 
 The Bluetooth integration hasn't seen an advertisement from the device recently.
 
@@ -135,7 +135,11 @@ The Bluetooth integration hasn't seen an advertisement from the device recently.
 
 ### "GATT write failed"
 
-Usually transient. `bleak-retry-connector` already retries up to 3 times per sync attempt. If it keeps failing:
+Usually transient. The write is attempted up to 3 times, each on a fresh
+connection (and each connection attempt is itself retried up to 3 times by
+`bleak-retry-connector`), and a lost write acknowledgement is verified by
+reading the time back from the clock before it's treated as a failure. If it
+keeps failing after all of that:
 
 - Check battery level — near-empty batteries produce unstable BLE connections.
 - Try another BLE proxy if you have one.

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, tzinfo
 import logging
-from typing import Any, Callable
+from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
@@ -72,6 +72,7 @@ class LYWSD02Coordinator(DataUpdateCoordinator[None]):
         self.last_error: str | None = None
         self.last_utcoffset: Any = None
         self._unsub: list[CALLBACK_TYPE] = []
+        self._sync_in_progress: bool = False
 
     @property
     def frequency(self) -> str:
@@ -154,34 +155,42 @@ class LYWSD02Coordinator(DataUpdateCoordinator[None]):
 
     async def async_sync(self) -> bool:
         """Run a single sync through the shared code path. Returns True on success."""
-        self.last_attempt = dt_util.utcnow()
-        try:
-            await set_time(
-                self.hass,
-                self.mac,
-                temp_unit=self.temp_unit,
-                clock_mode=self.clock_mode,
-            )
-        except (DeviceNotFoundError, DeviceCommunicationError) as exc:
-            self.last_status = STATUS_FAILED
-            self.last_error = str(exc)
-            _LOGGER.warning("Sync failed for %s: %s", self.mac, exc)
-            _LOGGER.debug("Sync traceback for %s", self.mac, exc_info=exc)
-            self.async_update_listeners()
-            return False
-        except Exception as exc:  # noqa: BLE001 — defensive catch for the coordinator
-            self.last_status = STATUS_FAILED
-            self.last_error = f"Unexpected error: {exc}"
-            _LOGGER.exception("Unexpected error syncing %s", self.mac)
-            self.async_update_listeners()
+        if self._sync_in_progress:
+            _LOGGER.debug("Sync already running for %s; skipping", self.mac)
             return False
 
-        self.last_sync = dt_util.utcnow()
-        self.last_status = STATUS_SUCCESS
-        self.last_error = None
-        self.last_utcoffset = dt_util.now().utcoffset()
-        self.async_update_listeners()
-        return True
+        self._sync_in_progress = True
+        try:
+            self.last_attempt = dt_util.utcnow()
+            try:
+                await set_time(
+                    self.hass,
+                    self.mac,
+                    temp_unit=self.temp_unit,
+                    clock_mode=self.clock_mode,
+                )
+            except (DeviceNotFoundError, DeviceCommunicationError) as exc:
+                self.last_status = STATUS_FAILED
+                self.last_error = str(exc)
+                _LOGGER.warning("Sync failed for %s: %s", self.mac, exc)
+                _LOGGER.debug("Sync traceback for %s", self.mac, exc_info=exc)
+                self.async_update_listeners()
+                return False
+            except Exception as exc:  # noqa: BLE001 — defensive catch for the coordinator
+                self.last_status = STATUS_FAILED
+                self.last_error = f"Unexpected error: {exc}"
+                _LOGGER.exception("Unexpected error syncing %s", self.mac)
+                self.async_update_listeners()
+                return False
+
+            self.last_sync = dt_util.utcnow()
+            self.last_status = STATUS_SUCCESS
+            self.last_error = None
+            self.last_utcoffset = dt_util.now().utcoffset()
+            self.async_update_listeners()
+            return True
+        finally:
+            self._sync_in_progress = False
 
     def compute_next_sync(self) -> datetime | None:
         if not self.auto_sync_enabled:

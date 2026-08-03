@@ -17,6 +17,17 @@ async def test_invalid_mac_rejected_by_schema(hass):
         )
 
 
+async def test_tz_offset_out_of_range_rejected_by_schema(hass):
+    assert await async_setup_component(hass, DOMAIN, {})
+    with pytest.raises(vol.Invalid):
+        await hass.services.async_call(
+            DOMAIN,
+            SERVICE_SET_TIME,
+            {"mac": "e7:2e:01:42:60:ff", "tz_offset": 200},
+            blocking=True,
+        )
+
+
 async def test_valid_mac_normalized_before_set_time(hass):
     assert await async_setup_component(hass, DOMAIN, {})
     with patch(

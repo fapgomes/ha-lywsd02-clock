@@ -23,6 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Test suite (`pytest-homeassistant-custom-component`): MAC helpers,
   byte-exact payload builders, device resolution and write sequence,
   service-schema validation. New `tests` job in the validation workflow.
+- The `timestamp` and `tz_offset` service parameters are now range-validated
+  (0–4294967295 and -12–14 respectively).
 
 ### Fixed
 - **Writes are retried on a fresh connection** (up to 3 attempts): the
@@ -32,6 +34,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   applies writes even when the link drops before the response arrives, so
   after a failed write the integration reconnects and reads the time back —
   if the clock took the value, the sync is reported as the success it is.
+- Overlapping syncs are prevented: a sync request is skipped when one is
+  already running for the same device.
 
 ### Removed
 - pygatt/gatttool path (incl. the `hciconfig` adapter reset and the sudo

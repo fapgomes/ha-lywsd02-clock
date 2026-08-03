@@ -103,7 +103,7 @@
         },
         "timeout": {
           "name": "Timeout",
-          "description": "BLE connection timeout in seconds."
+          "description": "How long to wait for a BLE advertisement from the clock before giving up. The full operation may take longer: failed writes are retried and verified."
         }
       }
     }

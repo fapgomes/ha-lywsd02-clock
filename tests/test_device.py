@@ -13,6 +13,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from bleak.exc import BleakError
+
 from custom_components.lywsd02_clock.device import (
     DeviceCommunicationError,
     DeviceNotFoundError,
@@ -44,6 +46,7 @@ async def test_wait_requeries_on_immediate_fire(hass):
 
     def fake_register(hass_arg, cb, matcher, mode):
         registered["cb"] = cb
+        registered["matcher"] = matcher
         cb(MagicMock(), MagicMock())  # HA fires immediately for known devices
         return MagicMock()
 
@@ -62,6 +65,7 @@ async def test_wait_requeries_on_immediate_fire(hass):
         registered["cb"](MagicMock(), MagicMock())  # real advertisement
         result = await asyncio.wait_for(task, timeout=1.0)
     assert result is device
+    assert registered["matcher"]["address"] == "E7:2E:01:42:60:FF"
 
 
 async def test_wait_times_out_to_none(hass):
@@ -143,6 +147,24 @@ async def test_write_failure_raises_and_still_disconnects(hass):
             await set_time(hass, MAC, timestamp_utc=1700000000, tz_offset_hours=0)
     assert mock_establish.await_count == 6  # 3 writes + 3 verifies
     assert client.disconnect.await_count == 6
+
+
+async def test_connect_failure_skips_read_back(hass):
+    """A connection failure (establish_connection itself raises) means no
+    write ever reached the device, so read-back verification would be
+    pointless — set_time must retry WRITE_ATTEMPTS times with no extra
+    verification connections in between."""
+    with patch(
+        f"{DEVICE_NS}.WRITE_RETRY_DELAY_SECONDS", 0
+    ), patch(
+        f"{DEVICE_NS}._resolve_ble_device", new=AsyncMock(return_value=MagicMock())
+    ), patch(
+        f"{DEVICE_NS}.establish_connection",
+        new=AsyncMock(side_effect=[BleakError("no route"), RuntimeError("boom"), BleakError("no route")]),
+    ) as mock_establish:
+        with pytest.raises(DeviceCommunicationError):
+            await set_time(hass, MAC, timestamp_utc=1700000000, tz_offset_hours=0)
+    assert mock_establish.await_count == 3  # only the 3 write attempts, no verify
 
 
 async def test_write_retries_with_fresh_connection(hass):

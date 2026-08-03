@@ -52,6 +52,16 @@ class DeviceCommunicationError(Exception):
     """Raised on any BLE connection or GATT write failure."""
 
 
+class DeviceConnectionError(DeviceCommunicationError):
+    """Raised when establish_connection itself fails (no write was attempted).
+
+    Internal: a subclass of DeviceCommunicationError, so existing callers that
+    catch the public error keep working unchanged. Used to skip the
+    read-back-verification step, which only makes sense when a write may
+    actually have reached the device.
+    """
+
+
 def _build_time_payload(timestamp_utc: int, tz_offset_hours: int) -> bytes:
     return struct.pack("<Ib", timestamp_utc, tz_offset_hours)
 
@@ -145,7 +155,7 @@ async def _write_payloads(
             BleakClientWithServiceCache, ble_device, name=mac, max_attempts=3
         )
     except Exception as exc:
-        raise DeviceCommunicationError(f"Connection failed: {exc}") from exc
+        raise DeviceConnectionError(f"Connection failed: {exc}") from exc
 
     try:
         await client.write_gatt_char(UUID_TIME, time_payload, response=True)
@@ -281,19 +291,23 @@ async def set_time(
             # attempt. (The optional clock-mode payload cannot be read back
             # on its own; a matching time read-back is treated as evidence
             # it landed too, since both share the TIME characteristic.)
-            unit_payload = payloads[1]
-            if await _read_back_matches(
-                ble_device,
-                mac,
-                attempt_timestamp_utc,
-                attempt_tz_offset_hours,
-                unit_payload,
-            ):
-                _LOGGER.debug(
-                    "write response lost but read-back confirms the device "
-                    "applied it"
-                )
-                return
+            # A DeviceConnectionError means establish_connection itself never
+            # succeeded, so no write reached the device — read-back would
+            # only waste a connection attempt and delay the retry.
+            if not isinstance(exc, DeviceConnectionError):
+                unit_payload = payloads[1]
+                if await _read_back_matches(
+                    ble_device,
+                    mac,
+                    attempt_timestamp_utc,
+                    attempt_tz_offset_hours,
+                    unit_payload,
+                ):
+                    _LOGGER.info(
+                        "write response lost but read-back confirms the "
+                        "device applied it"
+                    )
+                    return
             if attempt < WRITE_ATTEMPTS:
                 await asyncio.sleep(WRITE_RETRY_DELAY_SECONDS)
 

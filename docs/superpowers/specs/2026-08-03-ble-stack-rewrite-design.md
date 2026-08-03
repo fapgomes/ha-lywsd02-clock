@@ -148,7 +148,10 @@ wrapping the underlying error.
 **Time budget:** worst case ≈ `timeout` (60 s wait) + 3 connect attempts —
 roughly 70–90 s before failure. Acceptable for a service call and for the
 scheduled sync; in practice the device advertises every ~10 s, so the wait
-resolves in seconds.
+resolves in seconds. (Superseded by the post-verification retry loop below:
+the worst case extends well beyond the advertisement timeout, bounded by 3
+write attempts plus their read-back verifications — see "Post-verification
+amendment" below.)
 
 ### 4. MAC validation and manifest cleanup
 

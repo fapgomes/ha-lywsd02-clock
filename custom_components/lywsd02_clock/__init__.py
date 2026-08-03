@@ -10,6 +10,7 @@ from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_validation as cv
+from homeassistant.util import dt as dt_util
 
 from .const import (
     CONF_CLOCK_MODE,
@@ -48,8 +49,10 @@ def _validated_mac(value: str) -> str:
 SET_TIME_SCHEMA = vol.Schema(
     {
         vol.Required("mac"): _validated_mac,
-        vol.Optional("timestamp"): vol.Coerce(int),
-        vol.Optional("tz_offset"): vol.Coerce(int),
+        vol.Optional("timestamp"): vol.All(
+            vol.Coerce(int), vol.Range(min=0, max=4294967295)
+        ),
+        vol.Optional("tz_offset"): vol.All(vol.Coerce(int), vol.Range(min=-12, max=14)),
         vol.Optional("temp_mode"): vol.In(TEMP_UNITS),
         vol.Optional("clock_mode"): vol.All(vol.Coerce(int), vol.In(CLOCK_MODES)),
         vol.Optional("timeout", default=DEFAULT_TIMEOUT): vol.Coerce(float),
@@ -108,8 +111,6 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
             raise HomeAssistantError(str(exc)) from exc
 
         if coordinator is not None:
-            from homeassistant.util import dt as dt_util
-
             coordinator.last_attempt = dt_util.utcnow()
             coordinator.last_sync = dt_util.utcnow()
             coordinator.last_status = "success"
@@ -136,7 +137,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
 
-    hass.async_create_task(coordinator.async_initial_sync_if_needed())
+    entry.async_create_background_task(
+        hass,
+        coordinator.async_initial_sync_if_needed(),
+        name=f"lywsd02_clock initial sync {mac}",
+    )
     return True
 
 
