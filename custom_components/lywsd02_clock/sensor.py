@@ -1,4 +1,4 @@
-"""Sensor entities: last_sync, next_sync, last_sync_status."""
+"""Sensor entities: last_sync, next_sync, last_sync_status, battery."""
 from __future__ import annotations
 
 from datetime import datetime

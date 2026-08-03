@@ -181,7 +181,11 @@ async def _write_payloads(
         # failure here must never fail the sync that just succeeded.
         battery: int | None = None
         try:
-            battery = _parse_battery(await client.read_gatt_char(UUID_BATTERY))
+            # Bounded so a hung read can't hold the connection (and the sync
+            # bookkeeping waiting on it) open indefinitely; TimeoutError is
+            # caught below like any other best-effort read failure.
+            async with asyncio.timeout(5):
+                battery = _parse_battery(await client.read_gatt_char(UUID_BATTERY))
         except Exception as exc:  # noqa: BLE001 — best-effort read
             _LOGGER.debug("Battery read failed for %s: %s", mac, exc)
         return battery
@@ -233,9 +237,14 @@ async def _read_back_matches(
         battery: int | None = None
         if matched:
             try:
-                battery = _parse_battery(
-                    await client.read_gatt_char(UUID_BATTERY)
-                )
+                # Bounded so a hung read can't hold the connection (and the
+                # sync bookkeeping waiting on it) open indefinitely;
+                # TimeoutError is caught below like any other best-effort
+                # read failure.
+                async with asyncio.timeout(5):
+                    battery = _parse_battery(
+                        await client.read_gatt_char(UUID_BATTERY)
+                    )
             except Exception as exc:  # noqa: BLE001 — best-effort read
                 _LOGGER.debug("Battery read failed for %s: %s", mac, exc)
         return matched, battery

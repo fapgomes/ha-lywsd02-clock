@@ -18,6 +18,7 @@ from bleak.exc import BleakError
 from custom_components.lywsd02_clock.device import (
     DeviceCommunicationError,
     DeviceNotFoundError,
+    _parse_battery,
     _resolve_ble_device,
     set_time,
 )
@@ -350,3 +351,8 @@ async def test_battery_out_of_range_returns_none(hass):
             hass, MAC, timestamp_utc=1700000000, tz_offset_hours=0
         )
     assert result is None
+
+
+def test_parse_battery_empty_value_returns_none():
+    assert _parse_battery(b"") is None
+    assert _parse_battery(b"\x2a") == 42
