@@ -218,3 +218,24 @@ release, re-request the core review.
    the local adapter disabled or the clock only in range of a proxy). This
    validates the main functional gain of the rewrite, but is not a release
    blocker if impractical to stage.
+
+## Post-verification amendment (2026-08-03)
+
+Live verification on the maintainer's device revealed a firmware quirk the
+single-shot write design missed: the LYWSD02 intermittently drops the BLE
+link immediately after connect. A write in flight then fails (BlueZ surfaces
+ATT `UNLIKELY_ERROR 0x0E`) — but the device APPLIES the write anyway; only
+the acknowledgement is lost (visually confirmed: a sync that reported
+"failed after 3 attempts" had set the clock correctly). The legacy pygatt
+path was reliable only because it retried 3 times and treated a missing ACK
+as delivered.
+
+Amendments to §3:
+- `set_time` retries the write phase up to `WRITE_ATTEMPTS = 3` times, each
+  attempt on a fresh `establish_connection`, recomputing defaulted
+  timestamps per attempt (`WRITE_RETRY_DELAY_SECONDS = 2.0` between
+  attempts).
+- On a failed write, `_read_back_matches` opens a fresh connection and reads
+  the time (and unit) back; a match within `VERIFY_TOLERANCE_SECONDS = 30`
+  confirms delivery and the sync reports success. The optional clock-mode
+  payload cannot be read back and is assumed delivered alongside.

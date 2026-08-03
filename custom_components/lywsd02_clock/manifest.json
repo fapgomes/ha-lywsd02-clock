@@ -13,5 +13,5 @@
   "issue_tracker": "https://github.com/fapgomes/ha-lywsd02-clock/issues",
   "loggers": ["custom_components.lywsd02_clock"],
   "requirements": ["bleak-retry-connector>=3.0"],
-  "version": "0.14.2"
+  "version": "0.15.0"
 }

@@ -5,6 +5,40 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.0] - 2026-08-03
+
+### Changed
+- **Bluetooth handling rewritten to use Home Assistant's Bluetooth APIs
+  exclusively** (`homeassistant.components.bluetooth` +
+  `bleak-retry-connector`), per Home Assistant core review. Works with
+  local adapters and ESPHome BLE proxies. Three defects had made the
+  HA-stack path dead code: lowercase MAC lookups against habluetooth's
+  uppercase-keyed history, an advertisement wait that was never invoked,
+  and a double `connect()` via `async with` on the already-connected
+  client returned by `establish_connection`.
+
+### Added
+- The `mac` parameter of the `set_time` service is validated as a MAC
+  address.
+- Test suite (`pytest-homeassistant-custom-component`): MAC helpers,
+  byte-exact payload builders, device resolution and write sequence,
+  service-schema validation. New `tests` job in the validation workflow.
+
+### Fixed
+- **Writes are retried on a fresh connection** (up to 3 attempts): the
+  LYWSD02 intermittently drops the BLE link right after connecting, which
+  previously surfaced as `GATT Protocol Error: Unlikely Error`.
+- **Lost write acknowledgements no longer misreport failure**: the device
+  applies writes even when the link drops before the response arrives, so
+  after a failed write the integration reconnects and reads the time back —
+  if the clock took the value, the sync is reported as the success it is.
+
+### Removed
+- pygatt/gatttool path (incl. the `hciconfig` adapter reset and the sudo
+  monkeypatch), `bluetoothctl` subprocess paths, raw bluezdbus backend
+  path, and the never-installed `lywsd02`/bluepy path. `pygatt` dropped
+  from `requirements`.
+
 ## [0.14.2] - 2026-07-27
 
 ### Fixed
