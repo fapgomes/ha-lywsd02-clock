@@ -37,6 +37,12 @@ _LOGGER = logging.getLogger(__name__)
 WRITE_ATTEMPTS: Final = 3
 WRITE_RETRY_DELAY_SECONDS: float = 2.0
 
+# The device sometimes applies a write even though it drops the link before
+# sending the Write-Response back — so a lost ACK is a false negative, not
+# proof the write failed. A read-back within this many seconds of the
+# intended timestamp is treated as confirmation.
+VERIFY_TOLERANCE_SECONDS: Final = 30
+
 
 class DeviceNotFoundError(Exception):
     """Raised when no connectable advertisement was seen within the timeout."""
@@ -155,6 +161,53 @@ async def _write_payloads(
             _LOGGER.debug("Disconnect failed for %s: %s", mac, exc)
 
 
+async def _read_back_matches(
+    ble_device: BLEDevice,
+    mac: str,
+    expected_timestamp: int,
+    expected_tz: int,
+    expected_unit: bytes,
+) -> bool:
+    """Read back the time/unit characteristics to confirm a write landed even
+    though its Write-Response was lost.
+
+    Opens its OWN fresh connection (never reuses the doomed link from the
+    failed write attempt). Never raises: any failure here — connection or
+    read — just means "could not confirm", so the caller's normal
+    sleep-and-retry proceeds. The optional clock-mode payload shares the
+    TIME characteristic with the time payload and cannot be distinguished
+    from it on read-back, so it is assumed delivered alongside the time
+    write whenever the time read-back matches.
+    """
+    try:
+        client = await establish_connection(
+            BleakClientWithServiceCache, ble_device, name=mac, max_attempts=3
+        )
+    except Exception as exc:
+        _LOGGER.debug("Read-back connection failed for %s: %s", mac, exc)
+        return False
+
+    try:
+        time_value = await client.read_gatt_char(UUID_TIME)
+        unit_value = await client.read_gatt_char(UUID_UNIT)
+        if len(time_value) < 5:
+            return False
+        ts, tz = struct.unpack("<Ib", time_value[:5])
+        return (
+            abs(ts - expected_timestamp) <= VERIFY_TOLERANCE_SECONDS
+            and tz == expected_tz
+            and unit_value[:1] == expected_unit
+        )
+    except Exception as exc:
+        _LOGGER.debug("Read-back failed for %s: %s", mac, exc)
+        return False
+    finally:
+        try:
+            await client.disconnect()
+        except Exception as exc:  # noqa: BLE001 — must not mask the read result
+            _LOGGER.debug("Read-back disconnect failed for %s: %s", mac, exc)
+
+
 async def set_time(
     hass: HomeAssistant,
     mac: str,
@@ -222,6 +275,25 @@ async def set_time(
                 mac,
                 exc,
             )
+            # A dropped link can eat the Write-Response even though the
+            # device applied the write, so a raised DeviceCommunicationError
+            # is not proof of failure — read back before giving up on this
+            # attempt. (The optional clock-mode payload cannot be read back
+            # on its own; a matching time read-back is treated as evidence
+            # it landed too, since both share the TIME characteristic.)
+            unit_payload = payloads[1]
+            if await _read_back_matches(
+                ble_device,
+                mac,
+                attempt_timestamp_utc,
+                attempt_tz_offset_hours,
+                unit_payload,
+            ):
+                _LOGGER.debug(
+                    "write response lost but read-back confirms the device "
+                    "applied it"
+                )
+                return
             if attempt < WRITE_ATTEMPTS:
                 await asyncio.sleep(WRITE_RETRY_DELAY_SECONDS)
 
