@@ -1,0 +1,9 @@
+pytest-homeassistant-custom-component
+
+# Transitive test-only requirements: homeassistant.components.bluetooth
+# unconditionally imports homeassistant.components.usb, whose manifest.json
+# requirements are normally lazy-installed by HA at runtime (not by pip),
+# so they must be listed explicitly here for `pip install -r` to be
+# sufficient for pytest collection.
+aiousbwatcher==1.1.2
+serialx==1.8.2

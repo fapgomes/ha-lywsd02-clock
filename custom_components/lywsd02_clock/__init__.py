@@ -25,6 +25,7 @@ from .const import (
 )
 from .coordinator import LYWSD02Coordinator
 from .device import DeviceCommunicationError, DeviceNotFoundError, set_time
+from .mac import normalize_mac
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -47,16 +48,12 @@ SET_TIME_SCHEMA = vol.Schema(
 )
 
 
-def _normalize_mac(mac: str) -> str:
-    return mac.strip().lower()
-
-
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     """Register the domain-level service (shared across all entries)."""
     hass.data.setdefault(DOMAIN, {})
 
     async def _handle_set_time(call: ServiceCall) -> None:
-        mac = _normalize_mac(call.data["mac"])
+        mac = normalize_mac(call.data["mac"])
         coordinator: LYWSD02Coordinator | None = None
         for coord in hass.data.get(DOMAIN, {}).values():
             if isinstance(coord, LYWSD02Coordinator) and coord.mac == mac:
@@ -121,7 +118,7 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up a config entry: build coordinator, register schedule, forward platforms."""
-    mac = _normalize_mac(entry.data[CONF_MAC])
+    mac = normalize_mac(entry.data[CONF_MAC])
     coordinator = LYWSD02Coordinator(hass, entry, mac)
     coordinator.start_schedule()
 

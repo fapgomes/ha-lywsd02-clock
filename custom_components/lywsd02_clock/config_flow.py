@@ -1,7 +1,6 @@
 """Config + options flow for the LYWSD02 Clock integration."""
 from __future__ import annotations
 
-import re
 from typing import Any
 
 import voluptuous as vol
@@ -43,20 +42,11 @@ from .const import (
     TEMP_UNIT_C,
     TEMP_UNIT_F,
 )
-
-MAC_RE = re.compile(r"^[0-9a-f]{2}(:[0-9a-f]{2}){5}$")
-
-
-def _normalize_mac(mac: str) -> str:
-    return mac.strip().lower()
-
-
-def _is_valid_mac(mac: str) -> bool:
-    return bool(MAC_RE.match(_normalize_mac(mac)))
+from .mac import is_valid_mac, normalize_mac
 
 
 def _friendly_default(mac: str) -> str:
-    compact = _normalize_mac(mac).replace(":", "")
+    compact = normalize_mac(mac).replace(":", "")
     return f"LYWSD02 {compact[-4:].upper()}"
 
 
@@ -111,7 +101,7 @@ class LYWSD02ConfigFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_bluetooth(
         self, discovery_info: BluetoothServiceInfoBleak
     ) -> ConfigFlowResult:
-        mac = _normalize_mac(discovery_info.address)
+        mac = normalize_mac(discovery_info.address)
         await self.async_set_unique_id(mac)
         self._abort_if_unique_id_configured()
         self._discovered_mac = mac
@@ -168,7 +158,7 @@ class LYWSD02ConfigFlow(ConfigFlow, domain=DOMAIN):
             name = (info.name or "").upper()
             if "LYWSD02" not in name:
                 continue
-            mac = _normalize_mac(info.address)
+            mac = normalize_mac(info.address)
             if mac in configured_macs:
                 continue
             if mac not in discovered_macs:
@@ -176,10 +166,10 @@ class LYWSD02ConfigFlow(ConfigFlow, domain=DOMAIN):
 
         if user_input is not None:
             raw_mac = user_input.get(CONF_MAC, "").strip()
-            if not _is_valid_mac(raw_mac):
+            if not is_valid_mac(raw_mac):
                 errors[CONF_MAC] = "invalid_mac"
             else:
-                mac = _normalize_mac(raw_mac)
+                mac = normalize_mac(raw_mac)
                 await self.async_set_unique_id(mac)
                 self._abort_if_unique_id_configured()
                 return self._create_entry(
