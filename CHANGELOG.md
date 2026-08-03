@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.16.0] - 2026-08-03
+
+### Added
+- **Battery diagnostic sensor** (`sensor.<name>_battery`). The battery
+  percentage is read from the clock (GATT characteristic `EBE0CCC4`) on the
+  same connection each sync already opens — no extra BLE traffic. It
+  refreshes at the sync cadence (and on *Sync now*); a failed battery read
+  never fails the sync. This is the value `xiaomi_ble` cannot provide
+  passively, since the classic LYWSD02 does not broadcast battery in its
+  advertisements.
+
 ## [0.15.0] - 2026-08-03
 
 ### Changed
