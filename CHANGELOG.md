@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.17.0] - 2026-08-30
+
+### Fixed
+- **Minimum Home Assistant version raised to 2024.4.0** (`hacs.json`). The
+  config flow imports `ConfigFlowResult`, which only exists in core since
+  2024.4.0 — installing on 2024.1–2024.3 failed with an `ImportError`.
+  (Reported in the HACS submission review.)
+
+### Changed
+- `bleak-retry-connector` requirement capped to `<5`, so a future major
+  release with API changes is not pulled in silently.
+
 ## [0.16.0] - 2026-08-03
 
 ### Added
