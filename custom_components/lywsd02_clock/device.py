@@ -4,8 +4,7 @@ Single write path through Home Assistant's Bluetooth stack
 (`homeassistant.components.bluetooth` + `bleak-retry-connector`), which works
 with local adapters and ESPHome BLE proxies alike.
 
-Three defects made the previous HA-stack path dead code (see
-docs/superpowers/specs/2026-08-03-ble-stack-rewrite-design.md):
+Three defects made the previous HA-stack path dead code:
   1. lowercase MAC lookups against habluetooth's uppercase-keyed history;
   2. an advertisement wait that existed but was never invoked;
   3. `async with` on the already-connected client returned by
