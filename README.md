@@ -170,6 +170,12 @@ Actual battery life varies with temperature and firmware revision.
 - [`ashald/home-assistant-lywsd02`](https://github.com/ashald/home-assistant-lywsd02) — the original HA plugin this integration replaces.
 - [`h4/lywsd02`](https://github.com/h4/lywsd02) — Python library whose reverse-engineered protocol informed the BLE payloads.
 
+## Support the project
+
+If this project is useful to you, consider buying me a coffee to help keep it going:
+
+[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-fapgomes-FFDD00?logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/fapgomes)
+
 ## License
 
 [MIT](LICENSE)
