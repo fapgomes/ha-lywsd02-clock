@@ -37,6 +37,8 @@ PLATFORMS: list[Platform] = [
     Platform.SWITCH,
 ]
 
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
+
 
 def _validated_mac(value: str) -> str:
     """Validate and normalize a MAC address for the service schema."""
