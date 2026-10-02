@@ -4,6 +4,8 @@ pytest-homeassistant-custom-component
 # unconditionally imports homeassistant.components.usb, whose manifest.json
 # requirements are normally lazy-installed by HA at runtime (not by pip),
 # so they must be listed explicitly here for `pip install -r` to be
-# sufficient for pytest collection.
-aiousbwatcher==1.1.2
-serialx==1.8.2
+# sufficient for pytest collection. Left unpinned so they track the HA
+# version pulled in by pytest-homeassistant-custom-component (a stale pin
+# broke collection when HA 2026.10 moved to serialx 1.11.0).
+aiousbwatcher
+serialx
