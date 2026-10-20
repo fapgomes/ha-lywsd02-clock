@@ -25,16 +25,17 @@ Unlike service-only plugins, this is a full integration with UI setup, per-devic
 
 ## Requirements
 
-- Home Assistant **2024.1** or newer.
+- Home Assistant **2024.4** or newer.
 - A working Bluetooth stack in Home Assistant: either a local adapter supported by the [Bluetooth integration](https://www.home-assistant.io/integrations/bluetooth/) or an [ESPHome Bluetooth proxy](https://esphome.io/components/bluetooth_proxy.html) within range of the clock.
 
 ## Installation
 
 ### HACS (recommended)
 
-1. In HACS, open *Integrations → ⋮ → Custom repositories*.
-2. Add `https://github.com/fapgomes/ha-lywsd02-clock` with category **Integration**.
-3. Install **LYWSD02 Clock** and restart Home Assistant.
+LYWSD02 Clock is available in the default HACS store — no custom repository needed.
+
+1. In HACS, search for **LYWSD02 Clock**.
+2. Install it and restart Home Assistant.
 
 ### Manual
 
