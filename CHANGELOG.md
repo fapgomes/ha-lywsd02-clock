@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.17.1] - 2026-10-20
+
+### Fixed
+- Declare a config-entry-only `CONFIG_SCHEMA`, as required by hassfest for
+  integrations that implement `async_setup` but are set up only through
+  config entries.
+
+### Changed
+- README: minimum Home Assistant version aligned with `hacs.json`
+  (2024.4), and installation now points to the default HACS store — no
+  custom repository needed.
+
 ## [0.17.0] - 2026-08-30
 
 ### Fixed
